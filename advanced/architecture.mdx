@@ -7,7 +7,7 @@ Plannotator is a monorepo containing multiple applications and shared packages t
 
 ## Project Structure
 
-```
+```text
 plannotator/
 ├── apps/                        # Standalone applications
 │   ├── hook/                    # Claude Code plugin
@@ -21,7 +21,7 @@ plannotator/
 │   ├── editor/                  # Plan review UI
 │   └── review-editor/           # Code review UI
 └── legacy/                      # Pre-monorepo code (reference)
-```
+```text
 
 ## Plugin Architecture
 
@@ -31,7 +31,7 @@ Plannotator provides two plugin implementations for different AI coding assistan
 
 Uses the PermissionRequest hook system to intercept `ExitPlanMode` calls.
 
-```
+```text
 apps/hook/
 ├── .claude-plugin/
 │   └── plugin.json              # Plugin manifest
@@ -45,10 +45,10 @@ apps/hook/
 └── dist/
     ├── index.html               # Built plan viewer
     └── review.html              # Built code review viewer
-```
+```text
 
 **Hook flow:**
-```
+```text
 Claude calls ExitPlanMode
   ↓
 PermissionRequest hook fires
@@ -60,13 +60,13 @@ Server starts, opens browser
 User reviews plan
   ↓
 Approve/Deny decision sent to stdout
-```
+```text
 
 ### OpenCode Plugin (`apps/opencode-plugin/`)
 
 Uses custom tools and event handlers.
 
-```
+```text
 apps/opencode-plugin/
 ├── commands/                    # Slash commands
 │   ├── plannotator-review.md
@@ -74,10 +74,10 @@ apps/opencode-plugin/
 ├── index.ts                     # Plugin entry
 ├── plannotator.html             # Built plan viewer
 └── review-editor.html           # Built code review viewer
-```
+```text
 
 **Tool flow:**
-```
+```text
 Agent calls submit_plan tool
   ↓
 Plugin intercepts tool use
@@ -87,7 +87,7 @@ Server starts, opens browser
 User reviews plan
   ↓
 Feedback sent to agent session
-```
+```text
 
 ## Server Architecture
 
@@ -150,7 +150,7 @@ Shared React components in `packages/ui/` power all viewer applications.
 
 ### Core Components
 
-```
+```text
 packages/ui/components/
 ├── Viewer.tsx                   # Main plan viewer
 ├── Toolbar.tsx                  # Annotation toolbar
@@ -164,23 +164,23 @@ packages/ui/components/
     ├── SidebarContainer.tsx
     ├── SidebarTabs.tsx
     └── VersionBrowser.tsx
-```
+```text
 
 ### State Management
 
 Custom hooks manage complex state:
 
-```
+```text
 packages/ui/hooks/
 ├── useSharing.ts                # URL sharing + paste service
 ├── usePlanDiff.ts               # Version diffing
 ├── useSidebar.ts                # Sidebar state
 └── useLinkedDoc.ts              # Linked markdown docs
-```
+```text
 
 ### Utilities
 
-```
+```text
 packages/ui/utils/
 ├── parser.ts                    # Markdown → Block conversion
 ├── sharing.ts                   # Compression/decompression
@@ -188,13 +188,13 @@ packages/ui/utils/
 ├── planSave.ts                  # Plan save settings
 ├── agentSwitch.ts               # Agent switching (OpenCode)
 └── planDiffEngine.ts            # Line-level diffing
-```
+```text
 
 ## Data Flow
 
 ### Plan Review Flow
 
-```
+```text
 1. Agent exits plan mode
    ↓
 2. Hook/tool intercepts
@@ -233,11 +233,11 @@ packages/ui/utils/
 13. Server resolves promise, returns to plugin
     ↓
 14. Plugin outputs decision to stdout/agent
-```
+```text
 
 ### Version History Flow
 
-```
+```text
 1. Plan arrives at server
    ↓
 2. Generate slug from heading + date
@@ -261,11 +261,11 @@ packages/ui/utils/
    ↓
 8. User can select any version from sidebar
    Version Browser → fetch version → compute diff
-```
+```text
 
 ### URL Sharing Flow
 
-```
+```text
 1. User clicks "Share" button
    ↓
 2. UI compresses plan + annotations
@@ -293,13 +293,13 @@ packages/ui/utils/
 8. Decompress plan + annotations
    ↓
 9. Render plan with annotations applied
-```
+```text
 
 ## Storage Architecture
 
 Plannotator uses filesystem storage with a structured directory layout:
 
-```
+```text
 ~/.plannotator/
 ├── history/                     # Version history
 │   └── {project}/               # Project name (git repo or cwd)
@@ -314,7 +314,7 @@ Plannotator uses filesystem storage with a structured directory layout:
 └── pastes/                      # Paste service data (self-hosted)
     ├── xJ9k2mP1.json
     └── yK8n3oQ2.json
-```
+```text
 
 **Storage functions:** packages/server/storage.ts:29
 
@@ -335,11 +335,11 @@ bun run build:opencode   # apps/opencode-plugin/
 # Static sites (Astro)
 bun run build:portal     # Portal viewer
 bun run build:marketing  # Marketing site
-```
+```text
 
 ### Dependency Flow
 
-```
+```text
 apps/hook/server/index.ts
   ↓ imports
 packages/server/index.ts (startPlannotatorServer)
@@ -355,13 +355,13 @@ packages/editor/App.tsx
 packages/ui/components/Viewer.tsx
 packages/ui/hooks/usePlanDiff.ts
 packages/ui/utils/parser.ts
-```
+```text
 
 ## Paste Service Architecture
 
 Platform-agnostic core with pluggable storage backends.
 
-```
+```text
 apps/paste-service/
 ├── core/
 │   ├── handler.ts               # HTTP request handler
@@ -374,7 +374,7 @@ apps/paste-service/
 └── targets/
     ├── bun.ts                   # Bun runtime entry
     └── cloudflare.ts            # Cloudflare Worker entry
-```
+```text
 
 **Abstraction pattern:**
 ```typescript
@@ -382,7 +382,7 @@ interface PasteStore {
   put(id: string, data: string, ttlSeconds: number): Promise<void>;
   get(id: string): Promise<string | null>;
 }
-```
+```text
 
 Each target wires up its storage backend:
 ```typescript
@@ -393,7 +393,7 @@ handleRequest(request, store, cors, { maxSize, ttlSeconds });
 // Cloudflare
 const store = new KvPasteStore(env.PASTE_KV);
 handleRequest(request, store, cors);
-```
+```text
 
 ## Integration Points
 
@@ -406,7 +406,7 @@ Detects vaults and saves plans as markdown notes.
 ```typescript
 detectObsidianVaults()  // Scans ~/Library/Application Support/obsidian/
 saveToObsidian({ vaultPath, plan, tags })  // Writes .md file
-```
+```text
 
 ### Bear Integration
 
@@ -416,7 +416,7 @@ Creates Bear notes via `bear://x-callback-url/create`.
 
 ```typescript
 saveToBear({ plan, tags })  // Opens bear:// URL
-```
+```text
 
 ### VS Code Integration
 
@@ -426,7 +426,7 @@ Opens diffs between plan versions.
 
 ```typescript
 openEditorDiff(basePath, currentPath)  // Calls `code --diff`
-```
+```text
 
 ### Git Integration
 
@@ -436,7 +436,7 @@ Detects repository info for plan context.
 
 ```typescript
 getRepoInfo()  // Returns { name, branch, remote, commit }
-```
+```text
 
 ## Security Model
 
@@ -460,7 +460,7 @@ if (isLocalhost || allowedOrigins.includes(requestOrigin)) {
   return { "Access-Control-Allow-Origin": requestOrigin };
 }
 return {}; // No CORS headers → browser blocks
-```
+```text
 
 ### Path Security
 
@@ -472,7 +472,7 @@ const normalised = resolve(resolvedPath);
 if (!normalised.startsWith(projectRoot)) {
   return Response.json({ error: "Access denied" }, { status: 403 });
 }
-```
+```text
 
 ## Extension Points
 
@@ -518,7 +518,7 @@ URL sharing uses deflate-raw compression:
 ```typescript
 // 50 KB plan → 5 KB compressed (typical 10:1 ratio)
 compress(plan) → deflate-raw → base64 → URL-safe
-```
+```text
 
 ## Testing Strategy
 
@@ -530,7 +530,7 @@ claud --plugin-dir ./apps/hook
 
 # OpenCode
 # Install plugin from local directory
-```
+```text
 
 ### Development Servers
 
@@ -538,7 +538,7 @@ claud --plugin-dir ./apps/hook
 bun run dev:hook       # Plan viewer on http://localhost:5173
 bun run dev:review     # Review editor on http://localhost:5174
 bun run dev:portal     # Portal viewer on http://localhost:3001
-```
+```text
 
 ### Paste Service Testing
 
@@ -552,4 +552,4 @@ curl -X POST http://localhost:19433/api/paste \
 
 # Test GET
 curl http://localhost:19433/api/paste/xJ9k2mP1
-```
+```text
