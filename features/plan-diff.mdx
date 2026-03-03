@@ -1,0 +1,403 @@
+---
+title: Plan Diff Tracking
+description: Track and visualize changes between plan versions with line-level diffs
+---
+
+When you deny a plan and Claude revises it, Plannotator automatically tracks what changed between versions. A diff badge appears below the document, and you can toggle between normal view and diff view to see exactly what was modified.
+
+## How It Works
+
+### Automatic Versioning
+
+Every plan is automatically saved to `~/.plannotator/history/{project}/{slug}/` on arrival, **before** you see the UI:
+
+- **Slug generation**: First `# Heading` + today's date → `{sanitized-heading}-YYYY-MM-DD`
+- **Sequential versions**: `001.md`, `002.md`, `003.md`, etc.
+- **Same slug = iteration**: Same heading on same day = same plan being refined
+- **Deduplication**: If content matches the latest version, no new file is created
+- **Project scoping**: Organized by git repo name or current working directory
+
+<Info>
+  **Independent from User Settings**: Version history saves regardless of the "Save Plan" user setting, which only controls decision snapshots in `~/.plannotator/plans/`.
+</Info>
+
+### Storage Location
+
+Versions are stored in:
+
+```bash
+~/.plannotator/history/
+├── my-project/                    # Project name (git repo or cwd)
+│   ├── refactor-api-2026-03-03/  # Slug (heading + date)
+│   │   ├── 001.md                # First version
+│   │   ├── 002.md                # After first denial + revision
+│   │   └── 003.md                # After second denial + revision
+│   └── add-auth-2026-03-03/
+│       ├── 001.md
+│       └── 002.md
+└── another-project/
+    └── ...
+```
+
+Storage functions live in `packages/server/storage.ts`.
+
+## Diff Engine
+
+The diff engine (`packages/ui/utils/planDiffEngine.ts:47`) uses the `diff` npm package to compute line-level differences:
+
+```typescript
+export function computePlanDiff(
+  oldText: string,
+  newText: string
+): { blocks: PlanDiffBlock[]; stats: PlanDiffStats }
+```
+
+### Diff Block Types
+
+From `packages/ui/utils/planDiffEngine.ts:11`:
+
+```typescript
+interface PlanDiffBlock {
+  type: 'added' | 'removed' | 'modified' | 'unchanged';
+  content: string;      // New content (or old for 'removed')
+  oldContent?: string;  // For 'modified' blocks: what was replaced
+  lines: number;        // Line count
+}
+```
+
+### Modification Grouping
+
+The engine intelligently groups adjacent remove + add changes into "modified" blocks:
+
+```typescript
+// Instead of showing:
+// - Old line
+// + New line
+
+// Shows:
+// ~ Modified line (with both old and new content)
+```
+
+This provides cleaner, more readable diffs by showing **what changed** rather than separate deletions and additions.
+
+### Diff Statistics
+
+```typescript
+interface PlanDiffStats {
+  additions: number;      // Lines added
+  deletions: number;      // Lines removed
+  modifications: number;  // Blocks modified (grouped remove+add)
+}
+```
+
+Displayed in the diff badge as `+N/-M` (e.g., `+12/-8` for 12 additions, 8 deletions).
+
+## Visual Diff Modes
+
+Toggle between two rendering styles via the **diff mode switcher**:
+
+<Tabs>
+  <Tab title="Rendered (Clean) View">
+    The default diff view shows changes with color-coded visual indicators:
+    
+    - **Green left border**: Added content
+    - **Red left border + strikethrough**: Removed content  
+    - **Yellow left border**: Modified content (shows both old and new)
+    - **No border**: Unchanged content
+    
+    Content is rendered as formatted markdown with syntax highlighting preserved.
+    
+    **Component**: `PlanCleanDiffView` in `packages/ui/components/plan-diff/`
+  </Tab>
+  
+  <Tab title="Raw (Git-Style) View">
+    Traditional diff format with monospace font and `+/-` prefixes:
+    
+    ```diff
+    - Old content (removed)
+    + New content (added)
+      Unchanged context
+    ```
+    
+    Perfect for developers familiar with git diffs who want precise line-by-line changes.
+    
+    **Component**: `PlanRawDiffView` in `packages/ui/components/plan-diff/`
+  </Tab>
+</Tabs>
+
+<Tip>
+  **Preference Persistence**: Your diff mode choice is remembered across plan reviews using cookie-based settings.
+</Tip>
+
+## Using Plan Diff
+
+### Viewing the Diff
+
+<Steps>
+  <Step title="Trigger a Diff">
+    Deny a plan with feedback. When Claude revises and resubmits, the UI detects the previous version.
+  </Step>
+  
+  <Step title="See the Badge">
+    A `+N/-M` badge appears below the document card showing additions/deletions.
+  </Step>
+  
+  <Step title="Toggle Diff View">
+    Click the badge to switch between:
+    - **Normal view**: Full plan with annotations
+    - **Diff view**: Changes highlighted
+  </Step>
+  
+  <Step title="Compare Versions">
+    Open the **Version Browser** sidebar to select any previous version as the base for comparison.
+  </Step>
+</Steps>
+
+### Diff Badge
+
+The `PlanDiffBadge` component (`packages/ui/components/plan-diff/PlanDiffBadge`) displays:
+
+- **Stats**: `+additions/-deletions` count
+- **Click action**: Toggle diff view on/off
+- **Visual state**: Active when diff view is enabled
+- **Position**: Below document card, next to repo info
+
+## Version Browser
+
+Access historical versions via the sidebar:
+
+1. Click the **sidebar toggle** button
+2. Switch to the **Version Browser** tab
+3. See a chronological list of all versions for the current plan
+4. Click any version to set it as the diff base
+
+### Version List Display
+
+```typescript
+{
+  versionInfo: {
+    current: 3,           // Current version number
+    total: 3,             // Total versions available
+    slug: 'refactor-api-2026-03-03',
+    project: 'my-project'
+  }
+}
+```
+
+Each version shows:
+- **Version number** (e.g., "Version 2 of 3")
+- **Timestamp** of creation
+- **Selected indicator** if currently used as diff base
+
+## Plan Diff State Management
+
+The `usePlanDiff` hook (`packages/ui/hooks/usePlanDiff.ts`) manages:
+
+- **Base version selection**: Which version to compare against
+- **Diff computation**: Calls `computePlanDiff()` when versions change
+- **Version fetching**: Loads historical versions from server
+- **Auto-diff**: Automatically diffs against `previousPlan` from initial `/api/plan` response
+
+```typescript
+const {
+  diffBlocks,        // Computed diff blocks
+  diffStats,         // Addition/deletion counts
+  baseVersion,       // Selected base version number
+  setBaseVersion,    // Change base version
+  isLoading,         // Fetching version data
+} = usePlanDiff(currentPlan, previousPlan);
+```
+
+## VS Code Integration
+
+Open diffs directly in VS Code editor for side-by-side comparison:
+
+1. Click the **VS Code icon** in the diff view header
+2. Server writes both versions to temporary files
+3. Opens VS Code with `code --diff` command
+4. Side-by-side diff appears in your editor
+
+<Warning>
+  **VS Code Required**: This feature requires VS Code to be installed and the `code` command available in your PATH.
+</Warning>
+
+### VS Code Diff API
+
+Endpoint: `POST /api/plan/vscode-diff`
+
+Request body:
+```json
+{
+  "baseVersion": 2  // Version number to compare against
+}
+```
+
+Response:
+```json
+{
+  "ok": true
+}
+// or
+{
+  "error": "Failed to open VS Code"
+}
+```
+
+Implementation in `packages/server/ide.ts`.
+
+## API Endpoints
+
+Version and diff-related endpoints:
+
+| Endpoint | Method | Purpose |
+|----------|--------|--------|
+| `/api/plan` | GET | Returns plan with `previousPlan` and `versionInfo` |
+| `/api/plan/version` | GET | Fetch specific version: `?v=2` |
+| `/api/plan/versions` | GET | List all versions for current plan slug |
+| `/api/plan/history` | GET | List all plan slugs in current project |
+| `/api/plan/vscode-diff` | POST | Open diff in VS Code editor |
+
+### Version Response Format
+
+```json
+{
+  "plan": "# Plan Heading\n\nCurrent plan content...",
+  "previousPlan": "# Plan Heading\n\nPrevious version content...",
+  "versionInfo": {
+    "current": 3,
+    "total": 3,
+    "slug": "refactor-api-2026-03-03",
+    "project": "my-project"
+  }
+}
+```
+
+## Diff Rendering Details
+
+### Rendered View (Clean)
+
+From `PlanCleanDiffView`:
+
+- **Added blocks**: Green left border, rendered markdown
+- **Removed blocks**: Red left border, strikethrough text
+- **Modified blocks**: Yellow left border, shows both old (strikethrough) and new (normal) content
+- **Unchanged blocks**: No special styling, preserves syntax highlighting
+
+### Raw View (Git-Style)
+
+From `PlanRawDiffView`:
+
+- **Prefix symbols**:
+  - `+` for additions (green text)
+  - `-` for deletions (red text)
+  - ` ` (space) for unchanged (gray text)
+- **Monospace font**: Preserves alignment
+- **No markdown rendering**: Shows raw text for precise inspection
+
+## Line Counting
+
+The diff engine uses `countLines()` helper (`packages/ui/utils/planDiffEngine.ts:31`):
+
+```typescript
+function countLines(text: string): number {
+  const lines = text.split('\n');
+  // diffLines often includes trailing empty string from final newline
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    return lines.length - 1;
+  }
+  return lines.length;
+}
+```
+
+Handles trailing newlines correctly to avoid inflated line counts.
+
+## Sidebar Integration
+
+The sidebar (`packages/ui/hooks/useSidebar.ts`) provides two tabs:
+
+<Tabs>
+  <Tab title="Table of Contents">
+    - Auto-generated from markdown headings
+    - Smooth scroll navigation
+    - Opens automatically if "Auto-open Sidebar" setting is enabled
+  </Tab>
+  
+  <Tab title="Version Browser">
+    - Chronological list of all plan versions
+    - Click to select diff base
+    - Shows current version indicator
+    - Manual toggle only (never auto-opens)
+  </Tab>
+</Tabs>
+
+## Workflow Example
+
+<Steps>
+  <Step title="Initial Plan">
+    Claude submits a plan. Plannotator saves it as `~/.plannotator/history/my-app/add-feature-2026-03-03/001.md`.
+  </Step>
+  
+  <Step title="Request Changes">
+    You deny the plan with annotations: "Add error handling" and "Use async/await".
+  </Step>
+  
+  <Step title="Revision">
+    Claude revises the plan. Plannotator saves it as `002.md` and computes the diff.
+  </Step>
+  
+  <Step title="Review Diff">
+    The UI shows `+15/-8` badge. Click it to see:
+    - Green: New error handling code
+    - Yellow: Modified async patterns
+    - Red: Removed callback code
+  </Step>
+  
+  <Step title="Further Iteration">
+    Deny again with more feedback. Version `003.md` is created. You can now diff against `001.md` or `002.md` via Version Browser.
+  </Step>
+</Steps>
+
+## Configuration
+
+### Environment Variables
+
+No special configuration needed for diff tracking. It works automatically with:
+
+- `PLANNOTATOR_REMOTE`: Affects server mode but not diff functionality
+- `PLANNOTATOR_PORT`: Custom port (diff endpoints work on any port)
+
+### Storage Settings
+
+Version history storage is **always enabled** and cannot be disabled. The user's "Save Plan" setting only affects decision snapshots in `~/.plannotator/plans/`, not version history.
+
+## Troubleshooting
+
+### No Diff Badge Appearing
+
+- Check if this is the first version (no previous plan to compare)
+- Verify `previousPlan` is returned in `/api/plan` response
+- Look for console errors in browser dev tools
+
+### Diff Shows Everything as Changed
+
+- Verify versions are from the same plan slug
+- Check for formatting differences (trailing whitespace, line endings)
+- Try comparing against an older version via Version Browser
+
+### Version History Not Saving
+
+- Check disk permissions for `~/.plannotator/history/`
+- Verify project name detection (git repo or cwd)
+- Check server logs for storage errors
+
+### VS Code Diff Not Opening
+
+- Ensure `code` command is in PATH: `which code` (macOS/Linux) or `where code` (Windows)
+- Check VS Code is installed and up to date
+- Try manual diff: `code --diff /path/to/old /path/to/new`
+
+## Next Steps
+
+- Learn about [Plan Review](/features/plan-review) workflows
+- Explore [Code Review](/features/code-review) for git diff annotations
+- Understand [Markdown Annotation](/features/markdown-annotation) for arbitrary files

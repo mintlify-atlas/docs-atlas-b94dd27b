@@ -1,0 +1,401 @@
+---
+title: Self-Hosting
+description: Host the paste service and portal viewer on your own infrastructure
+---
+
+Plannotator consists of two components that can be self-hosted for complete control over your plan sharing infrastructure.
+
+## Architecture Overview
+
+The self-hosting stack includes:
+
+1. **Paste Service** - Stores compressed plan data for short URLs
+2. **Portal Viewer** - Static site for viewing shared plans
+3. **Plugin** - Connects to your self-hosted endpoints
+
+```
+Plugin → Paste Service (API) → Storage Backend (FS/KV/S3)
+         Portal Viewer (Static) → Loads from paste service
+```
+
+## Paste Service
+
+The paste service provides two API endpoints for storing and retrieving compressed plan data.
+
+### Quick Start (Bun Runtime)
+
+```bash
+cd apps/paste-service
+bun install
+bun run targets/bun.ts
+```
+
+The service will start on `http://localhost:19433` by default.
+
+### Storage Backends
+
+The paste service supports three storage backends:
+
+#### Filesystem Storage
+
+Default backend for Bun runtime. Stores pastes as JSON files.
+
+```bash
+export PASTE_DATA_DIR="/var/lib/plannotator/pastes"
+bun run targets/bun.ts
+```
+
+**Features:**
+- Automatic TTL expiration on startup
+- No external dependencies
+- Suitable for single-server deployments
+
+**File format:**
+```json
+{
+  "data": "compressed-plan-data...",
+  "expiresAt": 1735689600000
+}
+```
+
+#### Cloudflare KV Storage
+
+Designed for Cloudflare Workers deployment.
+
+```bash
+# Create KV namespace
+wrangler kv:namespace create PASTE_KV
+
+# Update wrangler.toml with your namespace ID
+# Deploy
+wrangler deploy
+```
+
+**Features:**
+- Global edge distribution
+- Automatic TTL expiration
+- High availability
+- No infrastructure management
+
+#### S3-Compatible Storage
+
+For AWS S3, MinIO, or other S3-compatible stores (implementation in `stores/s3.ts`).
+
+### Configuration
+
+See [Configuration](/advanced/configuration#paste-service-configuration) for all available environment variables.
+
+### API Endpoints
+
+#### POST /api/paste
+
+Store compressed plan data.
+
+**Request:**
+```json
+{
+  "data": "compressed-plan-data..."
+}
+```
+
+**Response:**
+```json
+{
+  "id": "xJ9k2mP1"
+}
+```
+
+**Error codes:**
+- `400` - Invalid JSON or missing data field
+- `413` - Payload too large (exceeds `PASTE_MAX_SIZE`)
+- `500` - Storage failure
+
+#### GET /api/paste/:id
+
+Retrieve stored paste data.
+
+**Response:**
+```json
+{
+  "data": "compressed-plan-data..."
+}
+```
+
+**Error codes:**
+- `404` - Paste not found or expired
+- `500` - Storage failure
+
+### Deployment Examples
+
+#### Docker
+
+```dockerfile
+FROM oven/bun:1
+
+WORKDIR /app
+COPY apps/paste-service ./apps/paste-service
+COPY package.json bun.lockb ./
+
+RUN bun install --frozen-lockfile
+
+ENV PASTE_PORT=8080
+ENV PASTE_DATA_DIR=/data
+EXPOSE 8080
+VOLUME /data
+
+CMD ["bun", "run", "apps/paste-service/targets/bun.ts"]
+```
+
+```bash
+docker build -t plannotator-paste .
+docker run -p 8080:8080 -v $(pwd)/data:/data plannotator-paste
+```
+
+#### Systemd Service
+
+```ini
+# /etc/systemd/system/plannotator-paste.service
+[Unit]
+Description=Plannotator Paste Service
+After=network.target
+
+[Service]
+Type=simple
+User=plannotator
+WorkingDirectory=/opt/plannotator
+Environment="PASTE_PORT=19433"
+Environment="PASTE_DATA_DIR=/var/lib/plannotator/pastes"
+Environment="PASTE_TTL_DAYS=7"
+ExecStart=/usr/local/bin/bun run apps/paste-service/targets/bun.ts
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable plannotator-paste
+sudo systemctl start plannotator-paste
+```
+
+#### Cloudflare Workers
+
+```bash
+cd apps/paste-service
+
+# Create KV namespace
+wrangler kv:namespace create PASTE_KV
+
+# Update wrangler.toml with namespace IDs
+# Edit ALLOWED_ORIGINS in wrangler.toml
+
+# Deploy
+wrangler deploy
+```
+
+Your paste service will be available at:
+```
+https://plannotator-paste.<your-subdomain>.workers.dev
+```
+
+#### Nginx Reverse Proxy
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name paste.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/paste.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/paste.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:19433;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+## Portal Viewer
+
+The portal is a static site that decodes and renders shared plans.
+
+### Build
+
+```bash
+cd apps/marketing
+bun install
+bun run build
+```
+
+Static files will be output to `dist/`.
+
+### Deploy
+
+#### Static Hosting (S3, Netlify, Vercel)
+
+```bash
+# Build
+bun run build
+
+# Deploy to S3
+aws s3 sync dist/ s3://my-bucket/
+aws s3 website s3://my-bucket/ --index-document index.html
+
+# Or use Netlify CLI
+netlify deploy --prod --dir=dist
+```
+
+#### Nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name share.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/share.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/share.example.com/privkey.pem;
+
+    root /var/www/plannotator-portal;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+## Plugin Configuration
+
+Once your services are deployed, configure the plugin to use them:
+
+```bash
+# Point to your self-hosted endpoints
+export PLANNOTATOR_SHARE_URL="https://share.example.com"
+export PLANNOTATOR_PASTE_URL="https://paste.example.com"
+```
+
+## Security Considerations
+
+### CORS Configuration
+
+Restrict paste service access to your portal domain:
+
+```bash
+export PASTE_ALLOWED_ORIGINS="https://share.example.com"
+```
+
+### Rate Limiting
+
+Implement rate limiting in your reverse proxy:
+
+```nginx
+limit_req_zone $binary_remote_addr zone=paste:10m rate=10r/m;
+
+server {
+    location /api/paste {
+        limit_req zone=paste burst=5;
+        proxy_pass http://localhost:19433;
+    }
+}
+```
+
+### Size Limits
+
+Enforce maximum paste size:
+
+```bash
+export PASTE_MAX_SIZE=524288  # 512 KB
+```
+
+### TTL Management
+
+Balance storage costs with user needs:
+
+```bash
+export PASTE_TTL_DAYS=7  # Delete after 7 days
+```
+
+### HTTPS
+
+Always use HTTPS in production:
+- Obtain certificates from Let's Encrypt
+- Configure TLS 1.2+ minimum
+- Enable HSTS headers
+
+## Monitoring
+
+### Health Checks
+
+The paste service responds to any invalid path with a 404 and helpful message:
+
+```bash
+curl http://localhost:19433/health
+# {"error":"Not found. Valid paths: POST /api/paste, GET /api/paste/:id"}
+```
+
+### Logging
+
+The Bun target logs to stderr:
+
+```
+Plannotator paste service running on http://localhost:19433
+Storage: /var/lib/plannotator/pastes
+TTL: 7 days
+```
+
+### Metrics
+
+Monitor these metrics:
+- Request rate (requests/second)
+- Error rate (4xx/5xx responses)
+- Paste size distribution
+- Storage usage
+- TTL expiration count
+
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+# Change the port
+export PASTE_PORT=8080
+```
+
+### CORS Errors
+
+Ensure your portal domain is in `PASTE_ALLOWED_ORIGINS`:
+
+```bash
+export PASTE_ALLOWED_ORIGINS="https://share.example.com,http://localhost:3001"
+```
+
+### Storage Permission Errors
+
+```bash
+# Ensure data directory is writable
+chown -R plannotator:plannotator /var/lib/plannotator/pastes
+chmod 755 /var/lib/plannotator/pastes
+```
+
+### Expired Pastes Not Deleted
+
+Expired pastes are only cleaned on service startup. Restart the service or implement a cron job:
+
+```bash
+# Cron job to restart service daily
+0 2 * * * systemctl restart plannotator-paste
+```
+
+## Migration from Hosted Service
+
+To migrate from the hosted service:
+
+1. Deploy your paste service and portal
+2. Update environment variables
+3. Test with a new plan share
+4. Old links will continue working (hosted service remains available)
+
+New shares will use your infrastructure automatically.

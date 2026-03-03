@@ -1,0 +1,223 @@
+---
+title: 'Block Type'
+description: 'Block type for markdown parsing and document structure'
+---
+
+## Overview
+
+Blocks represent the structural elements of a parsed markdown document. Each block corresponds to a semantic unit like a paragraph, heading, list item, or code block. The parser (`parseMarkdownToBlocks()`) converts markdown text into an array of Block objects.
+
+## Block
+
+```typescript
+interface Block {
+  id: string;
+  type: 'paragraph' | 'heading' | 'blockquote' | 'list-item' | 'code' | 'hr' | 'table';
+  content: string;
+  level?: number;
+  language?: string;
+  checked?: boolean;
+  order: number;
+  startLine: number;
+}
+```
+
+### Fields
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the block. Generated sequentially as `block-0`, `block-1`, etc.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  The type of markdown element this block represents.
+  
+  Possible values:
+  - `paragraph` - Regular text paragraph
+  - `heading` - Heading (# through ######)
+  - `blockquote` - Quoted text (>)
+  - `list-item` - List item (-, *, or 1.)
+  - `code` - Code block (```)
+  - `hr` - Horizontal rule (---)
+  - `table` - Table element
+</ResponseField>
+
+<ResponseField name="content" type="string" required>
+  The plain text content of the block, with markdown syntax stripped.
+  
+  Examples:
+  - For heading `## Hello World`, content is `"Hello World"`
+  - For list item `- Buy milk`, content is `"Buy milk"`
+  - For code block, content includes the raw code without backticks
+</ResponseField>
+
+<ResponseField name="level" type="number">
+  The nesting level for certain block types:
+  
+  - **For headings**: 1-6 (corresponding to # through ######)
+  - **For list items**: Indentation level (0 = root, 1 = first indent, etc.)
+    - Calculated as `Math.floor(spaceCount / 2)` where 2 spaces or 1 tab = 1 level
+</ResponseField>
+
+<ResponseField name="language" type="string">
+  Programming language identifier for code blocks. Extracted from the fence:
+  
+  ```rust
+  fn main() {}
+  ```
+  
+  Results in `language: "rust"`
+</ResponseField>
+
+<ResponseField name="checked" type="boolean">
+  Checkbox state for task list items:
+  
+  - `true` - Checked (`[x]` or `[X]`)
+  - `false` - Unchecked (`[ ]`)
+  - `undefined` - Not a checkbox (regular list item)
+</ResponseField>
+
+<ResponseField name="order" type="number" required>
+  Sequential order of the block in the document. Used for sorting and maintaining document structure.
+</ResponseField>
+
+<ResponseField name="startLine" type="number" required>
+  1-based line number where this block begins in the source markdown. Used for accurate error reporting and annotation positioning.
+</ResponseField>
+
+## Usage Examples
+
+### Parsing Markdown to Blocks
+
+```typescript
+import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
+
+const markdown = `
+# Project Plan
+
+This is a paragraph.
+
+- Task 1
+- Task 2
+  - Subtask 2.1
+
+\`\`\`typescript
+const x = 42;
+\`\`\`
+`;
+
+const blocks = parseMarkdownToBlocks(markdown);
+// Returns:
+// [
+//   { id: 'block-0', type: 'heading', content: 'Project Plan', level: 1, order: 0, startLine: 1 },
+//   { id: 'block-1', type: 'paragraph', content: 'This is a paragraph.', order: 1, startLine: 3 },
+//   { id: 'block-2', type: 'list-item', content: 'Task 1', level: 0, order: 2, startLine: 5 },
+//   { id: 'block-3', type: 'list-item', content: 'Task 2', level: 0, order: 3, startLine: 6 },
+//   { id: 'block-4', type: 'list-item', content: 'Subtask 2.1', level: 1, order: 4, startLine: 7 },
+//   { id: 'block-5', type: 'code', content: 'const x = 42;', language: 'typescript', order: 5, startLine: 9 },
+// ]
+```
+
+### Rendering Blocks by Type
+
+```typescript
+function renderBlock(block: Block): JSX.Element {
+  switch (block.type) {
+    case 'heading':
+      const HeadingTag = `h${block.level}` as keyof JSX.IntrinsicElements;
+      return <HeadingTag id={block.id}>{block.content}</HeadingTag>;
+    
+    case 'code':
+      return (
+        <pre>
+          <code className={`language-${block.language}`}>
+            {block.content}
+          </code>
+        </pre>
+      );
+    
+    case 'list-item':
+      const indent = (block.level || 0) * 24;
+      return (
+        <li style={{ paddingLeft: `${indent}px` }}>
+          {block.checked !== undefined && (
+            <input type="checkbox" checked={block.checked} readOnly />
+          )}
+          {block.content}
+        </li>
+      );
+    
+    case 'paragraph':
+      return <p id={block.id}>{block.content}</p>;
+    
+    case 'hr':
+      return <hr id={block.id} />;
+    
+    default:
+      return <div id={block.id}>{block.content}</div>;
+  }
+}
+```
+
+### Creating a Block Manually
+
+```typescript
+const headingBlock: Block = {
+  id: 'block-0',
+  type: 'heading',
+  content: 'Implementation Details',
+  level: 2,
+  order: 0,
+  startLine: 1,
+};
+
+const codeBlock: Block = {
+  id: 'block-1',
+  type: 'code',
+  content: 'function hello() {\n  return "world";\n}',
+  language: 'javascript',
+  order: 1,
+  startLine: 3,
+};
+
+const taskBlock: Block = {
+  id: 'block-2',
+  type: 'list-item',
+  content: 'Write unit tests',
+  level: 0,
+  checked: false,
+  order: 2,
+  startLine: 9,
+};
+```
+
+### Finding Blocks by Type
+
+```typescript
+function getCodeBlocks(blocks: Block[]): Block[] {
+  return blocks.filter(block => block.type === 'code');
+}
+
+function getTopLevelHeadings(blocks: Block[]): Block[] {
+  return blocks.filter(block => block.type === 'heading' && block.level === 1);
+}
+
+function getTaskList(blocks: Block[]): Block[] {
+  return blocks.filter(block => 
+    block.type === 'list-item' && block.checked !== undefined
+  );
+}
+```
+
+## Implementation Notes
+
+- Each list item is treated as a separate block for easier annotation
+- Indentation level is calculated from leading whitespace (2 spaces = 1 level, 1 tab = 1 level)
+- Code block language is extracted from the fence: ` ```rust ` → `language: "rust"`
+- Checkbox syntax `[ ]`, `[x]`, `[X]` is automatically parsed from list items
+- The `order` field ensures blocks maintain document sequence even after filtering
+- The `startLine` field is 1-based to match standard editor line numbering
+
+## Related Types
+
+- [Annotation](/api/types/annotations) - Annotations attach to blocks via blockId
+- [Parser Functions](/api/utils/parser) - Functions for parsing markdown to blocks

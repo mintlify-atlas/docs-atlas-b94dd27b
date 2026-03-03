@@ -1,0 +1,483 @@
+---
+title: Sharing and Collaboration
+description: Share annotated plans via URL and collaborate with your team using Plannotator's portable sharing features
+---
+
+Plannotator enables frictionless collaboration through URL-based sharing. Share complete plans with annotations, comments, and attachments without requiring database accounts or file transfers.
+
+## Overview
+
+Sharing in Plannotator uses a portable, client-side approach:
+
+- **No authentication required** - Anyone with the link can view
+- **Self-contained URLs** - Plan + annotations encoded in the URL
+- **Privacy-first** - Data never touches servers (hash-based sharing)
+- **Optional short URLs** - Encrypted paste service for large plans
+- **Collaborative identity** - Mark your annotations with your name
+
+## How Sharing Works
+
+### Hash-Based Sharing (Default)
+
+For most plans, Plannotator embeds the entire plan and annotations in the URL hash:
+
+```
+https://share.plannotator.ai/#eJyNVE1v2zAM_SuCTjvE...
+                            ^
+                            Everything after # is the compressed plan
+```
+
+**Compression pipeline:**
+
+1. Create payload with plan markdown and annotations
+2. Serialize to JSON
+3. Compress using deflate-raw (`CompressionStream`)
+4. Base64 encode
+5. Make URL-safe (replace `+/=` with `-_`)
+6. Append to URL as hash fragment
+
+**Privacy advantages:**
+
+- Hash fragments are never sent to the server (per HTTP spec)
+- The share portal loads, then decodes the hash client-side
+- No server-side storage or logging of plan content
+- Works offline once the portal page is cached
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/utils/sharing.ts:145`
+
+```typescript
+export async function generateShareUrl(
+  markdown: string,
+  annotations: Annotation[],
+  globalAttachments?: ImageAttachment[],
+  baseUrl: string = 'https://share.plannotator.ai'
+): Promise<string> {
+  const payload: SharePayload = {
+    p: markdown,
+    a: toShareable(annotations),
+    g: globalAttachments?.length ? toShareableImages(globalAttachments) : undefined,
+  };
+
+  const hash = await compress(payload);
+  return `${baseUrl}/#${hash}`;
+}
+```
+
+### Short URLs (Paste Service)
+
+For large plans that exceed browser URL length limits (~2000 chars), Plannotator offers short URLs:
+
+```
+https://share.plannotator.ai/p/abc123#key=xyz789
+                                       ^
+                                       Decryption key (never sent to server)
+```
+
+**How it works:**
+
+1. Compress the plan payload (same as hash-based)
+2. Encrypt the compressed data with a random key (client-side)
+3. Upload only the ciphertext to the paste service
+4. Receive a short ID (e.g., `abc123`)
+5. Build URL with ID + decryption key in hash fragment
+6. Server only sees encrypted data, never the actual plan
+
+**Encryption details:**
+
+- Uses Web Crypto API (`crypto.subtle.encrypt`)
+- AES-GCM algorithm with random IV
+- 256-bit encryption key generated client-side
+- Key stored in URL fragment (never transmitted)
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/utils/sharing.ts:207`
+
+```typescript
+export async function createShortShareUrl(
+  markdown: string,
+  annotations: Annotation[],
+  globalAttachments?: ImageAttachment[],
+  options?: {
+    pasteApiUrl?: string;
+    shareBaseUrl?: string;
+  }
+): Promise<{ shortUrl: string; id: string } | null> {
+  const payload: SharePayload = {
+    p: markdown,
+    a: toShareable(annotations),
+    g: globalAttachments?.length ? toShareableImages(globalAttachments) : undefined,
+  };
+
+  const compressed = await compress(payload);
+  const { ciphertext, key } = await encrypt(compressed);
+
+  const response = await fetch(`${pasteApi}/api/paste`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: ciphertext }),
+    signal: AbortSignal.timeout(5_000),
+  });
+
+  const result = await response.json() as { id: string };
+  return { shortUrl: `${shareBase}/p/${result.id}#key=${key}`, id: result.id };
+}
+```
+
+**User consent:**
+
+Short URLs require explicit user confirmation before uploading to the paste service. The UI shows:
+- Estimated upload size
+- Confirmation that data will be encrypted before upload
+- Option to use hash-based sharing instead (copies longer URL)
+
+## Shareable Annotation Format
+
+Annotations are serialized to a compact array format to minimize URL size:
+
+```typescript
+type ShareableAnnotation =
+  | ['D', originalText, author, images?]                      // Deletion
+  | ['R', originalText, replacementText, author, images?]     // Replacement
+  | ['C', originalText, commentText, author, images?]         // Comment
+  | ['I', contextText, insertionText, author, images?]        // Insertion
+  | ['G', commentText, author, images?];                      // Global comment
+```
+
+**Example payload:**
+
+```json
+{
+  "p": "# Implementation Plan\n\nInstall dependencies:\n```\nnpm install\n```",
+  "a": [
+    ["R", "npm install", "bun install", "alice", null],
+    ["C", "Install dependencies", "Should we lock versions?", "bob", null],
+    ["G", "Overall looks good, just a few tweaks", "alice", null]
+  ],
+  "g": [["https://example.com/diagram.png", "architecture-diagram"]]
+}
+```
+
+After compression, this becomes a URL hash like:
+```
+#eJyNVMtu2zAQ_BVBJ7UBZIuU5EdRIEiRoO2hSB...
+```
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/utils/sharing.ts:61`
+
+## Creating Share URLs
+
+### From the Plan Review UI
+
+1. Review the plan and add any annotations
+2. Click the **Share** button in the toolbar
+3. Plannotator generates a hash-based URL automatically
+4. If the URL is too large, you'll see a prompt:
+   - **Copy long URL** - Use hash-based sharing (longer URL, fully private)
+   - **Create short URL** - Upload encrypted data to paste service (requires consent)
+5. URL is copied to your clipboard
+6. Paste anywhere to share
+
+### From Code Reviews
+
+The `/plannotator-review` workflow also supports sharing:
+
+1. Annotate the code diff
+2. Click **Share Review** in the toolbar
+3. Share URL includes the git diff and your code annotations
+4. Recipients see the same diff view with your feedback overlaid
+
+### From Remote Sessions
+
+When using Plannotator in remote environments (SSH, devcontainers), share URLs are generated automatically:
+
+```bash
+export PLANNOTATOR_REMOTE=1
+```
+
+The server prints a share URL to the console instead of opening a browser:
+
+```
+✓ Plan review server started
+📋 Share URL: https://share.plannotator.ai/#eJyNVE1v2zAM...
+```
+
+See [Remote Environments](/guides/remote-environments) for details.
+
+## Receiving Shared Plans
+
+### Opening a Shared URL
+
+When you open a share URL:
+
+1. The share portal (`share.plannotator.ai`) loads
+2. Client-side JavaScript extracts the hash fragment
+3. Data is decompressed (and decrypted if using short URLs)
+4. Plan markdown is parsed and rendered
+5. Annotations are restored and highlighted in the document
+6. Hash is cleared from the URL bar (prevents re-parsing on refresh)
+
+### Viewing Annotations
+
+Shared plans are read-only by default, but you can:
+
+- **View all annotations** - Highlighted in the rendered plan
+- **See annotation authors** - Each annotation shows who created it
+- **Add your own annotations** - Click "Add Feedback" to layer your comments
+- **Re-share with your changes** - Generate a new URL including your annotations
+
+### Forking a Shared Plan
+
+"Forking" creates an editable copy with your annotations:
+
+1. Open the shared URL
+2. Add your annotations and comments
+3. Click **Share** to generate a new URL
+4. The new URL includes both the original annotations and yours
+5. Author identity differentiates who added what
+
+**Example workflow:**
+
+```
+Alice creates plan → shares URL → Bob opens it → Bob adds comments →
+Bob shares new URL → Charlie sees Alice's and Bob's feedback
+```
+
+## Collaborative Identity
+
+Set your identity so teammates know who added which annotations:
+
+### Setting Your Identity
+
+1. Open Plannotator settings (gear icon)
+2. Enter your name or email in the **Identity** field
+3. Click **Save**
+4. All future annotations will be tagged with your identity
+
+**Identity storage:**
+
+Your identity is stored in cookies and persists across sessions. Change it anytime in settings.
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/utils/storage.ts`
+
+### Multi-Author Plans
+
+When multiple people annotate a shared plan:
+
+```typescript
+interface Annotation {
+  author?: string;  // "alice", "bob@example.com", etc.
+  // ...
+}
+```
+
+The UI differentiates annotations by author:
+- **Color-coded badges** - Each author gets a consistent color
+- **Author labels** - Annotation tooltips show who created them
+- **Filter by author** - (Future feature) Show only annotations from specific people
+
+**Example exported markdown:**
+
+```markdown
+## Annotations
+
+**Replacement on "npm install" (by alice):**
+> Replace with: `bun install`
+
+**Comment on "Install dependencies" (by bob):**
+> Should we lock versions in package.json?
+
+**Global comment (by alice):**
+> Overall looks good, just a few tweaks needed
+```
+
+## Self-Hosting the Share Portal
+
+For organizations that prefer to keep plan data on their own infrastructure:
+
+### Deploy the Portal
+
+1. Build the static portal site:
+   ```bash
+   cd workspace/source
+   bun run build:portal
+   ```
+
+2. Deploy `apps/portal/dist/` to your hosting:
+   - AWS S3 + CloudFront
+   - Vercel / Netlify
+   - Nginx / Apache static hosting
+   - Any static file server
+
+3. Set the environment variable for your users:
+   ```bash
+   export PLANNOTATOR_SHARE_URL=https://plans.yourcompany.com
+   ```
+
+Now all share URLs will use your domain instead of `share.plannotator.ai`.
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/share-url.ts`
+
+### Self-Hosting the Paste Service
+
+For short URL support, deploy the paste service:
+
+1. Choose a storage backend:
+   - **Filesystem** (`apps/paste-service/stores/fs.ts`) - Simple, local disk storage
+   - **S3** (`apps/paste-service/stores/s3.ts`) - AWS S3 or compatible (MinIO, R2)
+   - **KV** (`apps/paste-service/stores/kv.ts`) - Cloudflare Workers KV
+
+2. Run the Bun server:
+   ```bash
+   cd apps/paste-service
+   bun run targets/bun.ts
+   ```
+
+3. Set the environment variable:
+   ```bash
+   export PLANNOTATOR_PASTE_URL=https://paste.yourcompany.com
+   ```
+
+**Storage options:**
+
+```bash
+# Filesystem (default: ./data/)
+STORAGE_BACKEND=fs STORAGE_PATH=/var/plannotator/paste bun run targets/bun.ts
+
+# S3-compatible
+STORAGE_BACKEND=s3 S3_BUCKET=plannotator-paste S3_REGION=us-east-1 bun run targets/bun.ts
+
+# Cloudflare Workers (deploy to workers.dev)
+wrangler deploy
+```
+
+See `apps/paste-service/README.md` for detailed deployment instructions.
+
+## URL Length Limits
+
+**Browser limits:**
+
+- Chrome: ~32,000 characters (practical limit ~8,000)
+- Firefox: ~65,000 characters
+- Safari: ~80,000 characters
+- Edge: ~2,000 characters (matches Internet Explorer)
+
+**Plannotator behavior:**
+
+- Hash-based URLs work for plans up to ~100 KB (after compression)
+- Beyond that, the UI prompts for short URL creation
+- Short URLs have no practical size limit (paste service handles it)
+
+**Compression effectiveness:**
+
+Typical compression ratios for markdown plans:
+
+- Plain text plans: 60-70% size reduction
+- Plans with code blocks: 70-80% size reduction
+- Heavily annotated plans: 50-60% size reduction
+
+A 10 KB markdown plan typically becomes a ~2 KB URL hash.
+
+## Security and Privacy
+
+### Hash-Based Sharing
+
+**Fully private:**
+- Hash fragments never leave the browser
+- No server-side logging or storage
+- Works offline after initial portal load
+
+**Risks:**
+- Anyone with the URL can view the plan
+- URLs may be logged in browser history, proxy logs, etc.
+- Sensitive plans should use additional access controls
+
+### Short URLs (Paste Service)
+
+**Encrypted at rest:**
+- Plans are encrypted client-side before upload
+- Paste service stores only ciphertext
+- Decryption key in URL fragment (never transmitted)
+- Server compromise doesn't expose plan content
+
+**Risks:**
+- Paste service sees request metadata (IP, timestamp)
+- URLs may be enumerated (short IDs are predictable)
+- Data retention policy depends on your deployment
+
+**Hosted service retention:**
+
+The official paste service (`plannotator-paste.plannotator.workers.dev`):
+- Retains data for 90 days, then auto-deletes
+- No access logs or analytics
+- HTTPS enforced
+- No account or authentication required
+
+Self-hosted deployments can set their own retention policies.
+
+### Best Practices
+
+**For internal plans:**
+- Use self-hosted portal and paste service
+- Set short retention periods (7-30 days)
+- Consider VPN or IP allowlists for paste service
+
+**For public plans:**
+- Sanitize sensitive data (API keys, internal URLs, etc.)
+- Use hash-based sharing when possible (more private)
+- Remember that short URLs are discoverable by ID
+
+**For confidential plans:**
+- Don't use URL sharing at all
+- Use the "Save to Obsidian" or "Save to Disk" features instead
+- Share via secure file transfer (encrypted email, secure drive)
+
+## Troubleshooting
+
+### "URL too long" error
+
+The plan exceeds browser URL limits.
+
+**Solution:** Use short URL sharing (requires paste service).
+
+### Short URL creation fails
+
+The paste service is unavailable or unreachable.
+
+**Solutions:**
+- Check your `PLANNOTATOR_PASTE_URL` setting
+- Verify the paste service is running (if self-hosted)
+- Use hash-based sharing instead (longer URL, but works offline)
+
+### Shared URL shows blank page
+
+The hash is corrupted or the portal failed to load.
+
+**Solutions:**
+- Check browser console for JavaScript errors
+- Try a different browser
+- Regenerate the share URL from the original plan
+
+### Annotations don't appear
+
+Text positions changed or the restoration failed.
+
+**Cause:** Annotations are restored by searching for `originalText` in the rendered document. If the text changed, restoration fails.
+
+**Solutions:**
+- Verify the plan markdown matches exactly
+- Check for encoding issues (special characters, line endings)
+- Use version history to compare plan changes
+
+### "Decryption failed" error (short URLs)
+
+The URL fragment is missing or corrupted.
+
+**Solutions:**
+- Ensure the full URL was copied, including `#key=...`
+- Check for URL encoding issues (some chat apps mangle URLs)
+- Regenerate the short URL
+
+## Related
+
+- [Annotation Types](/guides/annotation-types) - Learn about different annotation types
+- [Plan Versioning](/guides/plan-versioning) - Track changes across iterations
+- [Remote Environments](/guides/remote-environments) - Using Plannotator over SSH or in containers

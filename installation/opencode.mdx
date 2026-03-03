@@ -1,0 +1,186 @@
+---
+title: OpenCode Installation
+description: Install Plannotator for OpenCode with the submit_plan tool and slash commands
+---
+
+Install Plannotator for OpenCode to enable the `submit_plan` tool and visual plan review workflows.
+
+## Installation
+
+<Steps>
+
+### Add Plugin to Configuration
+
+Add Plannotator to your `opencode.json` configuration file:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@plannotator/opencode@latest"]
+}
+```
+
+### Restart OpenCode
+
+Restart OpenCode to load the plugin. The `submit_plan` tool will now be available to the agent.
+
+### Install Slash Commands (Optional)
+
+To enable the `/plannotator-review` and `/plannotator-annotate` commands, run the install script:
+
+<CodeGroup>
+
+```bash macOS / Linux / WSL
+curl -fsSL https://plannotator.ai/install.sh | bash
+```
+
+```powershell Windows PowerShell
+irm https://plannotator.ai/install.ps1 | iex
+```
+
+</CodeGroup>
+
+This script:
+- Installs the `plannotator` CLI tool
+- Clears any cached plugin versions
+- Enables code review and annotation features
+
+</Steps>
+
+## Verification
+
+To verify the installation:
+
+<Steps>
+
+### Check Plugin Load
+
+Start OpenCode and check the startup logs for:
+
+```bash
+Loaded plugin: @plannotator/opencode
+```
+
+### Test the submit_plan Tool
+
+1. Ask the agent: "Create a plan to add authentication to the app"
+2. When the agent calls `submit_plan`, the Plannotator UI should open in your browser
+3. You should see the plan with annotation capabilities
+
+### Test Slash Commands (if installed)
+
+Run `/plannotator-review` to verify the code review feature opens in your browser.
+
+</Steps>
+
+## Remote Environments
+
+When using OpenCode in a devcontainer, Docker, or remote SSH environment:
+
+<Steps>
+
+### Configure Environment Variables
+
+Set these variables in your container or remote environment:
+
+```bash
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999
+```
+
+### Configure Port Forwarding
+
+<CodeGroup>
+
+```json VS Code devcontainer
+// In .devcontainer/devcontainer.json
+{
+  "containerEnv": {
+    "PLANNOTATOR_REMOTE": "1",
+    "PLANNOTATOR_PORT": "9999"
+  },
+  "forwardPorts": [9999]
+}
+```
+
+```yaml Docker Compose
+# In docker-compose.yml
+services:
+  workspace:
+    environment:
+      - PLANNOTATOR_REMOTE=1
+      - PLANNOTATOR_PORT=9999
+    ports:
+      - "9999:9999"
+```
+
+```bash SSH
+# Add to ~/.ssh/config
+Host your-server
+    LocalForward 9999 localhost:9999
+```
+
+</CodeGroup>
+
+### Access the UI
+
+When `submit_plan` is called, manually open `http://localhost:9999` in your local browser.
+
+</Steps>
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `PLANNOTATOR_REMOTE` | Enable remote mode (skips auto-opening browser) | `0` |
+| `PLANNOTATOR_PORT` | Fixed port for the server | Random (local), `19432` (remote) |
+| `PLANNOTATOR_BROWSER` | Custom browser command or path | System default |
+| `PLANNOTATOR_SHARE_URL` | Custom share portal URL for self-hosting | `https://share.plannotator.ai` |
+
+## Available Features
+
+After installation, you'll have access to:
+
+- **`submit_plan` tool**: Agent can submit plans for visual review
+- **`/plannotator-review`**: Open code review UI for git diffs (requires CLI install)
+- **`/plannotator-annotate <file>`**: Annotate markdown files (requires CLI install)
+- **Plan Diff**: Automatic detection of changes between plan versions
+- **Obsidian Integration**: Save approved plans to your Obsidian vault
+
+## Troubleshooting
+
+### Plugin Not Loading
+
+If the plugin doesn't load:
+
+1. Verify the plugin name is correct: `@plannotator/opencode@latest`
+2. Check for typos in `opencode.json`
+3. Try clearing the plugin cache and reinstalling:
+
+```bash
+rm -rf ~/.opencode/plugins/node_modules/@plannotator
+```
+
+Then restart OpenCode.
+
+### Browser Doesn't Open
+
+If the browser doesn't open when `submit_plan` is called:
+
+1. Check if you're in a remote environment (set `PLANNOTATOR_REMOTE=1`)
+2. Look for the URL in the terminal output
+3. Try setting a custom browser with `PLANNOTATOR_BROWSER`
+
+### Slash Commands Not Available
+
+If `/plannotator-review` doesn't work:
+
+1. Verify the CLI is installed: `which plannotator` (macOS/Linux) or `where plannotator` (Windows)
+2. Run the install script again
+3. Restart OpenCode after installing
+
+## Next Steps
+
+- Learn how to [use the submit_plan tool](/guides/submit-plan-tool)
+- Configure [Obsidian integration](/guides/obsidian-integration)
+- Set up [code review workflows](/guides/code-review)

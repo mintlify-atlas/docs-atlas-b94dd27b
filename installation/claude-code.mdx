@@ -1,0 +1,139 @@
+---
+title: Claude Code Installation
+description: Install Plannotator for Claude Code with automatic plan review hooks
+---
+
+Install Plannotator for Claude Code to enable visual plan review, annotations, and approval workflows before your agent executes changes.
+
+## Prerequisites
+
+Before installing the plugin, you need to install the `plannotator` command-line tool that Claude Code will use.
+
+<Steps>
+
+### Install the Plannotator CLI
+
+<CodeGroup>
+
+```bash macOS / Linux / WSL
+curl -fsSL https://plannotator.ai/install.sh | bash
+```
+
+```powershell Windows PowerShell
+irm https://plannotator.ai/install.ps1 | iex
+```
+
+```cmd Windows CMD
+curl -fsSL https://plannotator.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+</CodeGroup>
+
+The install script downloads the Plannotator binary and adds it to your system PATH.
+
+### Install the Claude Code Plugin
+
+In Claude Code, run these commands:
+
+```bash
+/plugin marketplace add backnotprop/plannotator
+/plugin install plannotator@plannotator
+```
+
+### Restart Claude Code
+
+**Important:** You must restart Claude Code after installing the plugin for the hooks to take effect.
+
+</Steps>
+
+## Verification
+
+To verify the installation:
+
+1. Start a conversation with Claude Code
+2. Ask the agent to create a plan for a task
+3. When Claude exits plan mode, the Plannotator UI should automatically open in your browser
+
+If the browser doesn't open automatically, check that:
+- The `plannotator` command is in your PATH (run `which plannotator` on macOS/Linux or `where plannotator` on Windows)
+- You restarted Claude Code after plugin installation
+
+## Alternative: Manual Hook Installation
+
+If you prefer not to use the plugin system, you can manually configure the hook in your Claude Code settings.
+
+Add this to your `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "plannotator",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Remote Environments
+
+When running Claude Code in a remote environment (SSH, devcontainer, WSL), you need to configure Plannotator for remote mode.
+
+<Steps>
+
+### Set Environment Variables
+
+Add these to your shell profile (`.bashrc`, `.zshrc`, etc.):
+
+```bash
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999  # Choose any available port
+```
+
+### Configure Port Forwarding
+
+<CodeGroup>
+
+```bash SSH
+# Add to ~/.ssh/config
+Host your-server
+    LocalForward 9999 localhost:9999
+```
+
+```json VS Code devcontainer
+// In .devcontainer/devcontainer.json
+{
+  "forwardPorts": [9999]
+}
+```
+
+</CodeGroup>
+
+### Access the UI
+
+When the agent creates a plan, manually open `http://localhost:9999` in your local browser.
+
+</Steps>
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `PLANNOTATOR_REMOTE` | Enable remote mode (skips auto-opening browser) | `0` |
+| `PLANNOTATOR_PORT` | Fixed port for the server | Random (local), `19432` (remote) |
+| `PLANNOTATOR_BROWSER` | Custom browser to open plans in | System default |
+| `PLANNOTATOR_SHARE_URL` | Custom share portal URL | `https://share.plannotator.ai` |
+
+## Next Steps
+
+- Learn how to [review and annotate plans](/guides/reviewing-plans)
+- Configure [Obsidian integration](/guides/obsidian-integration) to save approved plans
+- Set up [code review](/guides/code-review) with `/plannotator-review`

@@ -1,0 +1,506 @@
+---
+title: How Plannotator Works
+description: Deep dive into Plannotator's workflow, architecture, plan versioning system, and data flow between agents and the review UI.
+---
+
+# How Plannotator Works
+
+Plannotator integrates with AI coding agents through a hook system that intercepts plan submissions, provides a visual review interface, and returns structured feedback to the agent.
+
+## Core Workflow
+
+<Steps>
+  <Step title="Agent creates a plan">
+    Your AI coding agent (Claude Code, OpenCode, or Pi) finishes planning and attempts to exit plan mode.
+  </Step>
+
+  <Step title="Hook intercepts the plan">
+    Plannotator's `PermissionRequest` hook fires before the agent proceeds:
+
+    ```typescript
+    // Hook reads plan from stdin
+    const hookEvent = JSON.parse(await Bun.stdin.text());
+    const plan = hookEvent.tool_input.plan;
+    ```
+  </Step>
+
+  <Step title="Server starts and opens browser">
+    A Bun server starts on a random port (local) or fixed port `19432` (remote) and serves the review UI:
+
+    ```typescript
+    const server = await startPlannotatorServer({
+      plan,
+      origin: 'claude-code',
+      htmlContent: planHtmlContent,
+      sharingEnabled: true,
+      onReady: handleServerReady
+    });
+    ```
+  </Step>
+
+  <Step title="User reviews in browser">
+    The UI loads the plan, parses markdown into blocks, and enables annotation:
+
+    - Select text to create annotations
+    - Toggle between selection, comment, and redline modes
+    - Attach images via paste or upload
+    - View table of contents and version history
+  </Step>
+
+  <Step title="User decides: Approve or Request Changes">
+    **Approve** (no annotations):
+    ```json
+    {
+      "hookSpecificOutput": {
+        "decision": { "behavior": "allow" }
+      }
+    }
+    ```
+
+    **Request Changes** (with annotations):
+    ```json
+    {
+      "hookSpecificOutput": {
+        "decision": {
+          "behavior": "deny",
+          "message": "Exported annotations as structured feedback"
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Agent receives feedback">
+    The agent reads the structured feedback and revises the plan based on your annotations:
+
+    ```markdown
+    ## Feedback on Implementation Plan
+
+    ### DELETION at line 15-18
+    > Remove this section - out of scope for MVP
+
+    ### REPLACEMENT at line 42-45
+    Original:
+    > Use REST API for communication
+
+    Replace with:
+    > Use WebSocket for real-time updates
+
+    ### COMMENT at line 67
+    > How does this handle authentication tokens?
+    ```
+  </Step>
+</Steps>
+
+## Architecture Overview
+
+Plannotator is built as a monorepo with clear separation between plugins, server logic, and UI components:
+
+```
+plannotator/
+├── apps/
+│   ├── hook/                  # Claude Code plugin
+│   ├── opencode-plugin/       # OpenCode plugin
+│   ├── pi-extension/          # Pi extension
+│   ├── paste-service/         # Short URL encryption service
+│   └── marketing/             # Documentation site (plannotator.ai)
+├── packages/
+│   ├── server/                # Shared server (plan, review, annotate)
+│   ├── ui/                    # React components & utilities
+│   ├── editor/                # Plan review app
+│   └── review-editor/         # Code review app
+```
+
+### Server API Endpoints
+
+The Bun server exposes a REST API for the UI:
+
+<CodeGroup>
+```typescript Plan Server (packages/server/index.ts)
+// Get current plan with metadata
+GET /api/plan
+// Returns: { plan, origin, previousPlan, versionInfo, repoInfo }
+
+// Fetch specific version from history
+GET /api/plan/version?v=2
+// Returns: { plan, version }
+
+// List all versions of current plan
+GET /api/plan/versions
+// Returns: { project, slug, versions: [...] }
+
+// List all plans in project
+GET /api/plan/history
+// Returns: { project, plans: [...] }
+
+// Approve plan
+POST /api/approve
+// Body: { feedback?, obsidian?, bear?, agentSwitch?, planSave?, permissionMode? }
+
+// Deny plan with feedback
+POST /api/deny
+// Body: { feedback, planSave? }
+
+// Upload image attachment
+POST /api/upload
+// Returns: { path, originalName }
+
+// Serve uploaded images
+GET /api/image?path=/tmp/...
+
+// Open VS Code diff view
+POST /api/plan/vscode-diff
+// Body: { baseVersion }
+```
+
+```typescript Review Server (packages/server/review.ts)
+// Get git diff
+GET /api/diff
+// Returns: { rawPatch, gitRef, origin }
+
+// Submit review feedback
+POST /api/feedback
+// Body: { feedback, annotations, agentSwitch }
+
+// Image upload/serving (same as plan server)
+POST /api/upload
+GET /api/image
+```
+
+```typescript Annotate Server (packages/server/annotate.ts)
+// Get markdown file for annotation
+GET /api/plan
+// Returns: { plan, origin, mode: "annotate", filePath }
+
+// Submit annotations as feedback
+POST /api/feedback
+// Body: { feedback, annotations }
+```
+</CodeGroup>
+
+<Info>
+  All servers use random ports locally to avoid conflicts. In remote mode (`PLANNOTATOR_REMOTE=1`), they use fixed port `19432` and skip browser auto-open.
+</Info>
+
+## Plan Versioning System
+
+Every plan is automatically saved to version history **before** the UI loads. This enables plan diff and version comparison.
+
+### Storage Structure
+
+```bash
+~/.plannotator/
+├── history/              # Automatic version history
+│   └── {project}/        # Git repo name or cwd
+│       └── {slug}/       # Derived from first heading + date
+│           ├── 001.md    # First version
+│           ├── 002.md    # After deny → revise
+│           └── 003.md    # After another revision
+└── plans/                # User-controlled snapshots
+    ├── {slug}-approved.md
+    └── {slug}-denied.md
+```
+
+### Slug Generation
+
+Slugs are generated from the plan's first `# Heading` plus today's date:
+
+```typescript
+// packages/server/storage.ts
+export function generateSlug(plan: string): string {
+  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const heading = extractFirstHeading(plan); // First # line
+  const slug = heading ? sanitizeTag(heading) : null;
+  return slug ? `${slug}-${date}` : `plan-${date}`;
+}
+```
+
+**Examples:**
+- Plan with heading `# Add User Authentication` → `add-user-authentication-2026-03-03`
+- Same heading, same day → versions increment in same folder
+- Different heading or different day → new slug
+
+<Tip>
+  Versions are deduplicated automatically. If the agent resubmits an identical plan, no new version is created.
+</Tip>
+
+### Version History Workflow
+
+```typescript
+// On plan arrival
+const project = await detectProjectName(); // Git repo or "_unknown"
+const slug = generateSlug(plan);
+const historyResult = saveToHistory(project, slug, plan);
+
+// Detect previous version for diff
+const previousPlan = historyResult.version > 1
+  ? getPlanVersion(project, slug, historyResult.version - 1)
+  : null;
+
+// Send to UI
+return {
+  plan,
+  previousPlan,
+  versionInfo: {
+    version: historyResult.version,
+    totalVersions: getVersionCount(project, slug),
+    project
+  }
+};
+```
+
+## Plan Diff Engine
+
+When a plan is revised, the UI shows a diff badge with `+N/-M` stats. Click to toggle diff view.
+
+### Diff Computation
+
+The diff engine uses the `diff` npm package for line-level comparison:
+
+```typescript
+// packages/ui/utils/planDiffEngine.ts
+import { diffLines } from 'diff';
+
+export function computePlanDiff(
+  basePlan: string,
+  currentPlan: string
+): { blocks: PlanDiffBlock[], stats: PlanDiffStats } {
+  const changes = diffLines(basePlan, currentPlan);
+  
+  const blocks: PlanDiffBlock[] = [];
+  let addedLines = 0;
+  let removedLines = 0;
+  
+  // Group consecutive remove+add into "modified" blocks
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    
+    if (change.added && i > 0 && changes[i - 1].removed) {
+      // Modified block (removed + added)
+      blocks.push({
+        type: 'modified',
+        oldContent: changes[i - 1].value,
+        newContent: change.value
+      });
+    } else if (change.removed) {
+      blocks.push({ type: 'removed', content: change.value });
+      removedLines += change.count;
+    } else if (change.added) {
+      blocks.push({ type: 'added', content: change.value });
+      addedLines += change.count;
+    } else {
+      blocks.push({ type: 'unchanged', content: change.value });
+    }
+  }
+  
+  return { blocks, stats: { addedLines, removedLines } };
+}
+```
+
+### Diff View Modes
+
+**Rendered (Clean) View** - Color-coded borders:
+- 🟢 Green left border = added
+- 🔴 Red left border + strikethrough = removed
+- 🟡 Yellow left border = modified
+
+**Raw View** - Git-style diff:
+```diff
+- Removed line
++ Added line
+  Unchanged line
+```
+
+<Note>
+  Use the VS Code diff integration to compare versions side-by-side in your editor:
+  ```typescript
+  POST /api/plan/vscode-diff
+  Body: { baseVersion: 1 }
+  ```
+</Note>
+
+## Annotation System
+
+Annotations are stored as structured data and exported as human-readable markdown for the agent.
+
+### Annotation Types
+
+```typescript
+// packages/ui/types.ts
+enum AnnotationType {
+  DELETION = 'DELETION',       // Remove this section
+  INSERTION = 'INSERTION',     // Add missing content
+  REPLACEMENT = 'REPLACEMENT', // Suggest alternative
+  COMMENT = 'COMMENT',         // Ask question or note
+  GLOBAL_COMMENT = 'GLOBAL_COMMENT' // Overall feedback
+}
+
+interface Annotation {
+  id: string;
+  type: AnnotationType;
+  originalText: string;  // Selected text
+  text?: string;         // Comment or replacement text
+  author?: string;       // Identity for collaboration
+  images?: ImageAttachment[]; // Attached screenshots
+  startMeta?: {          // DOM position metadata
+    parentTagName: string;
+    parentIndex: number;
+    textOffset: number;
+  };
+  endMeta?: { /* ... */ };
+}
+```
+
+### Export to Agent Feedback
+
+Annotations are converted to markdown before sending to the agent:
+
+```typescript
+// packages/ui/utils/parser.ts
+export function exportAnnotations(
+  blocks: Block[],
+  annotations: Annotation[],
+  globalAttachments: ImageAttachment[]
+): string {
+  let output = '## Requested Changes\n\n';
+  
+  // Group by block
+  for (const block of blocks) {
+    const blockAnnotations = annotations.filter(a => a.blockId === block.id);
+    
+    for (const ann of blockAnnotations) {
+      if (ann.type === 'DELETION') {
+        output += `### DELETION at line ${block.startLine}\n`;
+        output += `> ${ann.originalText}\n\n`;
+      }
+      else if (ann.type === 'REPLACEMENT') {
+        output += `### REPLACEMENT at line ${block.startLine}\n`;
+        output += `Original:\n> ${ann.originalText}\n\n`;
+        output += `Replace with:\n> ${ann.text}\n\n`;
+      }
+      // ... other types
+    }
+  }
+  
+  return output;
+}
+```
+
+## URL Sharing & Encryption
+
+Plannotator shares plans via URL with compression and optional encryption.
+
+### Small Plans (Hash-based)
+
+For plans under ~1MB, the entire plan + annotations fit in the URL hash:
+
+```typescript
+// packages/ui/utils/sharing.ts
+const payload = {
+  p: plan,                    // Plan markdown
+  a: compactAnnotations,      // Serialized annotations
+  g: globalAttachments        // Image references
+};
+
+const json = JSON.stringify(payload);
+const compressed = await compressDeflate(json);
+const base64 = btoa(compressed);
+const urlSafe = base64.replace(/\+/g, '-').replace(/\//g, '_');
+
+const shareUrl = `${baseUrl}#${urlSafe}`;
+```
+
+<Info>
+  Hash-based shares never touch a server. Data stays in the URL fragment which browsers don't send to servers.
+</Info>
+
+### Large Plans (Encrypted Short URLs)
+
+For plans over the size limit, Plannotator uses a paste service with AES-256-GCM encryption:
+
+```typescript
+// Generate encryption key in browser
+const key = await crypto.subtle.generateKey(
+  { name: 'AES-GCM', length: 256 },
+  true,
+  ['encrypt', 'decrypt']
+);
+
+// Encrypt plan with key
+const iv = crypto.getRandomValues(new Uint8Array(12));
+const encrypted = await crypto.subtle.encrypt(
+  { name: 'AES-GCM', iv },
+  key,
+  planData
+);
+
+// Upload ciphertext to paste service
+const { id } = await fetch(`${pasteApiUrl}/api/paste`, {
+  method: 'POST',
+  body: JSON.stringify({ data: base64(encrypted), iv: base64(iv) })
+}).then(r => r.json());
+
+// Export key and embed in URL fragment
+const exportedKey = await crypto.subtle.exportKey('raw', key);
+const keyBase64 = btoa(exportedKey);
+
+const shortUrl = `${baseUrl}/${id}#key=${keyBase64}`;
+```
+
+**Security Properties:**
+- Server stores only ciphertext (cannot decrypt)
+- Decryption key never sent to server (lives in URL `#key=...`)
+- Each paste gets unique key (no key reuse)
+- Auto-delete after 7 days
+
+<Warning>
+  Short URLs require both the paste ID (from server) and the decryption key (from URL fragment). If either is lost, the plan cannot be recovered.
+</Warning>
+
+## Remote Development Support
+
+Plannotator automatically detects remote environments and adapts:
+
+```typescript
+// packages/server/remote.ts
+export function isRemoteSession(): boolean {
+  return (
+    process.env.PLANNOTATOR_REMOTE === '1' ||
+    process.env.PLANNOTATOR_REMOTE === 'true' ||
+    !!process.env.SSH_TTY ||
+    !!process.env.SSH_CONNECTION
+  );
+}
+
+export function getServerPort(): number {
+  const envPort = process.env.PLANNOTATOR_PORT;
+  if (envPort) return parseInt(envPort, 10);
+  return isRemoteSession() ? 19432 : 0; // 0 = random port
+}
+```
+
+**Remote mode behavior:**
+- Uses fixed port `19432` (or `PLANNOTATOR_PORT`)
+- Skips automatic browser opening
+- Generates share link and writes to stderr for easy copying
+
+<Tip>
+  In VS Code devcontainers or GitHub Codespaces, set `PLANNOTATOR_REMOTE=1` in your environment to enable remote mode.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Features Guide" icon="star" href="/features">
+    Explore all features with examples and screenshots
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/advanced/configuration">
+    Environment variables and customization options
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/advanced/self-hosting">
+    Host your own paste service and share portal
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/plan-server">
+    Server API endpoints and data types
+  </Card>
+</CardGroup>

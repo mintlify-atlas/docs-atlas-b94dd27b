@@ -1,0 +1,268 @@
+---
+title: Pi Installation
+description: Install Plannotator for the Pi coding agent with plan mode and file-based workflows
+---
+
+Install Plannotator for [Pi](https://github.com/mariozechner/pi) to enable file-based plan mode with visual browser review and approval workflows.
+
+## Installation
+
+<Steps>
+
+### Install from npm (Recommended)
+
+Install the Plannotator extension directly from npm:
+
+```bash
+pi install npm:@plannotator/pi-extension
+```
+
+### Restart Pi
+
+Restart Pi to load the extension. The plan mode features will now be available.
+
+</Steps>
+
+## Alternative Installation Methods
+
+### Try Without Installing
+
+You can test Plannotator without installing it:
+
+```bash
+pi -e npm:@plannotator/pi-extension
+```
+
+This loads the extension for the current session only.
+
+### Install from Source
+
+For development or customization:
+
+<Steps>
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/backnotprop/plannotator.git
+cd plannotator
+```
+
+### Build the Extension
+
+```bash
+bun install
+bun run build:pi
+```
+
+This builds the plan review and code review UIs and copies them into the extension directory.
+
+### Install Locally
+
+```bash
+pi install ./apps/pi-extension
+```
+
+</Steps>
+
+## Verification
+
+<Steps>
+
+### Start Pi in Plan Mode
+
+Start Pi with the `--plan` flag:
+
+```bash
+pi --plan
+```
+
+### Test Plan Mode
+
+1. Ask the agent to plan a task: "Plan how to add user authentication"
+2. The agent will explore your codebase and write to `PLAN.md`
+3. When the agent calls `exit_plan_mode`, the Plannotator UI should open in your browser
+4. You should see the plan with annotation and approval options
+
+### Test Commands
+
+Verify the available commands:
+
+```bash
+/plannotator-status  # Show current phase and plan file
+/plannotator         # Toggle plan mode on/off
+```
+
+</Steps>
+
+## Usage
+
+### Starting Plan Mode
+
+<CodeGroup>
+
+```bash Command Line Flag
+pi --plan
+```
+
+```bash During Session
+# In an active Pi session
+/plannotator
+```
+
+```bash Keyboard Shortcut
+# Press Ctrl+Alt+P to toggle plan mode
+```
+
+</CodeGroup>
+
+### Custom Plan File Location
+
+By default, Pi writes plans to `PLAN.md`. You can specify a custom location:
+
+```bash
+pi --plan --plan-file ./docs/current-plan.md
+```
+
+## Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `/plannotator` | Toggle plan mode on/off |
+| `/plannotator-status` | Show current phase, plan file, and progress |
+| `/plannotator-review` | Open code review UI for current git changes |
+| `/plannotator-annotate <file>` | Open markdown file in annotation UI |
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Alt+P` | Toggle plan mode on/off |
+
+## How Plan Mode Works
+
+Plannotator manages Pi through a state machine:
+
+### Planning Phase
+
+During the planning phase:
+- Tools are restricted to read-only operations
+- Agent can use: `read`, `bash` (read-only commands), `grep`, `find`, `ls`
+- `write` is only allowed for the plan file
+- `edit` is disabled
+- Agent explores codebase and writes plan to `PLAN.md` using markdown checklists:
+
+```markdown
+- [ ] Add validation to the login form
+- [ ] Write tests for the new validation logic
+- [ ] Update error messages in the UI
+```
+
+### Review in Browser
+
+When the agent calls `exit_plan_mode`:
+1. Plannotator UI opens in your browser
+2. You can annotate specific parts of the plan
+3. Choose to **Approve**, **Deny**, or **Approve with notes**
+4. Feedback is sent back to the agent
+
+### Execution Phase
+
+After approval:
+- Full tool access is restored
+- Agent executes the plan with `read`, `bash`, `edit`, `write`
+- Progress is tracked via `[DONE:n]` markers
+- Status shown in terminal and checklist widget
+
+### Plan Diff on Resubmission
+
+If you deny a plan and the agent revises it:
+- Plan Diff automatically highlights changes between versions
+- See additions, deletions, and modifications
+- Toggle between rendered and raw diff views
+
+## Requirements
+
+- [Pi](https://github.com/mariozechner/pi) >= 0.53.0
+- Modern web browser for the Plannotator UI
+
+## Remote Environments
+
+When running Pi in a remote environment:
+
+<Steps>
+
+### Set Environment Variables
+
+```bash
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999
+```
+
+### Configure Port Forwarding
+
+<CodeGroup>
+
+```bash SSH
+# Add to ~/.ssh/config
+Host your-server
+    LocalForward 9999 localhost:9999
+```
+
+```json VS Code Remote
+// Forward port in VS Code
+// View → Command Palette → "Forward a Port"
+// Enter: 9999
+```
+
+</CodeGroup>
+
+### Access the UI
+
+Manually open `http://localhost:9999` in your local browser when the agent exits plan mode.
+
+</Steps>
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `PLANNOTATOR_REMOTE` | Enable remote mode (skips auto-opening browser) | `0` |
+| `PLANNOTATOR_PORT` | Fixed port for the server | Random (local), `19432` (remote) |
+| `PLANNOTATOR_BROWSER` | Custom browser command or path | System default |
+| `PLANNOTATOR_SHARE_URL` | Custom share portal URL | `https://share.plannotator.ai` |
+
+## Troubleshooting
+
+### Extension Not Loading
+
+If the extension doesn't load:
+
+```bash
+# List installed extensions
+pi list
+
+# Verify @plannotator/pi-extension is listed
+# If not, reinstall:
+pi install npm:@plannotator/pi-extension
+```
+
+### Plan Mode Not Working
+
+If plan mode doesn't activate:
+
+1. Verify you started with `--plan` flag or ran `/plannotator`
+2. Check for errors in the Pi terminal output
+3. Ensure you're using Pi >= 0.53.0: `pi --version`
+
+### Browser Doesn't Open
+
+1. Check if you're in a remote environment (set `PLANNOTATOR_REMOTE=1`)
+2. Look for the URL in the terminal output
+3. Manually open the URL shown in the terminal
+
+## Next Steps
+
+- Learn about [plan mode workflows](/guides/plan-mode)
+- Set up [code review](/guides/code-review) with `/plannotator-review`
+- Configure [Obsidian integration](/guides/obsidian-integration)

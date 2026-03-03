@@ -1,0 +1,215 @@
+---
+title: Configuration
+description: Environment variables and configuration options for Plannotator
+---
+
+Plannotator can be configured using environment variables to customize server behavior, browser preferences, and integration settings.
+
+## Server Configuration
+
+These variables control how Plannotator servers start and communicate.
+
+<ParamField path="PLANNOTATOR_REMOTE" type="string" default="false">
+  Set to `1` or `true` to enable remote mode for SSH sessions or devcontainers.
+  
+  When enabled:
+  - Uses fixed port (19432 by default) instead of random port
+  - Skips automatic browser opening
+  - Optimized for port forwarding scenarios
+  
+  ```bash
+  export PLANNOTATOR_REMOTE=1
+  ```
+  
+  **Legacy:** `SSH_TTY` and `SSH_CONNECTION` are still detected automatically. Use `PLANNOTATOR_REMOTE` for explicit control.
+</ParamField>
+
+<ParamField path="PLANNOTATOR_PORT" type="number" default="random locally, 19432 for remote">
+  Fixed port number for the Plannotator server.
+  
+  ```bash
+  export PLANNOTATOR_PORT=9999
+  ```
+  
+  Valid range: 1-65535. Invalid values fall back to defaults.
+</ParamField>
+
+<ParamField path="PLANNOTATOR_ORIGIN" type="string" default="auto-detected">
+  Origin identifier for the plugin context.
+  
+  Automatically set by plugins:
+  - `claude-code` - Claude Code plugin
+  - `opencode` - OpenCode plugin
+  
+  Used internally for feature detection and UI customization.
+</ParamField>
+
+## Browser Configuration
+
+<ParamField path="PLANNOTATOR_BROWSER" type="string" default="system default">
+  Custom browser to open plans in.
+  
+  **macOS:** App name or full path
+  ```bash
+  export PLANNOTATOR_BROWSER="Google Chrome"
+  # or
+  export PLANNOTATOR_BROWSER="/Applications/Firefox.app"
+  ```
+  
+  **Linux/Windows:** Executable path
+  ```bash
+  export PLANNOTATOR_BROWSER="/usr/bin/firefox"
+  ```
+  
+  Falls back to system defaults (`open` on macOS, `xdg-open` on Linux, `start` on Windows).
+</ParamField>
+
+<ParamField path="BROWSER" type="string" default="system default">
+  Fallback browser variable. `PLANNOTATOR_BROWSER` takes precedence if both are set.
+</ParamField>
+
+## URL Sharing Configuration
+
+These variables configure the URL sharing and paste service integration.
+
+<ParamField path="PLANNOTATOR_SHARE_URL" type="string" default="https://share.plannotator.ai">
+  Base URL for share links when using the portal viewer.
+  
+  ```bash
+  export PLANNOTATOR_SHARE_URL="https://my-portal.example.com"
+  ```
+  
+  Used when generating shareable plan URLs. Point this to your self-hosted portal instance.
+</ParamField>
+
+<ParamField path="PLANNOTATOR_PASTE_URL" type="string" default="https://plannotator-paste.plannotator.workers.dev">
+  Base URL of the paste service API for short URL sharing.
+  
+  ```bash
+  export PLANNOTATOR_PASTE_URL="http://localhost:19433"
+  ```
+  
+  Required for creating short URLs when plans exceed URL length limits. Point this to your self-hosted paste service.
+</ParamField>
+
+## Paste Service Configuration
+
+These variables configure the self-hosted paste service (Bun runtime only).
+
+<ParamField path="PASTE_PORT" type="number" default="19433">
+  Port for the paste service HTTP server.
+  
+  ```bash
+  export PASTE_PORT=8080
+  ```
+</ParamField>
+
+<ParamField path="PASTE_DATA_DIR" type="string" default="~/.plannotator/pastes">
+  Directory for storing paste data (filesystem storage backend).
+  
+  ```bash
+  export PASTE_DATA_DIR="/var/lib/plannotator/pastes"
+  ```
+</ParamField>
+
+<ParamField path="PASTE_TTL_DAYS" type="number" default="7">
+  Time-to-live for stored pastes in days.
+  
+  ```bash
+  export PASTE_TTL_DAYS=30
+  ```
+  
+  Expired pastes are automatically cleaned up on service startup.
+</ParamField>
+
+<ParamField path="PASTE_MAX_SIZE" type="number" default="524288">
+  Maximum paste size in bytes (default: 512 KB).
+  
+  ```bash
+  export PASTE_MAX_SIZE=1048576  # 1 MB
+  ```
+</ParamField>
+
+<ParamField path="PASTE_ALLOWED_ORIGINS" type="string" default="https://share.plannotator.ai,http://localhost:3001">
+  Comma-separated list of allowed CORS origins.
+  
+  ```bash
+  export PASTE_ALLOWED_ORIGINS="https://my-portal.com,https://share.plannotator.ai"
+  ```
+  
+  Use `*` to allow all origins (not recommended for production).
+</ParamField>
+
+## Example Configurations
+
+### Local Development
+
+```bash
+# Use system defaults
+claud --plugin-dir ./apps/hook
+```
+
+### Remote Development (SSH/Devcontainer)
+
+```bash
+# Enable remote mode with fixed port
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999
+
+# Forward port 9999 from remote to local
+ssh -L 9999:localhost:9999 user@remote
+```
+
+### Self-Hosted Setup
+
+```bash
+# Point to your self-hosted services
+export PLANNOTATOR_SHARE_URL="https://share.mycompany.com"
+export PLANNOTATOR_PASTE_URL="https://paste.mycompany.com"
+
+# Custom browser
+export PLANNOTATOR_BROWSER="/usr/bin/chromium"
+```
+
+### Paste Service (Self-Hosted)
+
+```bash
+# Run paste service with custom settings
+export PASTE_PORT=8080
+export PASTE_DATA_DIR="/opt/plannotator/data"
+export PASTE_TTL_DAYS=30
+export PASTE_MAX_SIZE=1048576  # 1 MB
+export PASTE_ALLOWED_ORIGINS="https://share.mycompany.com"
+
+bun run apps/paste-service/targets/bun.ts
+```
+
+## Configuration Precedence
+
+Environment variables follow this precedence:
+
+1. **Explicit environment variables** - Values set by the user
+2. **Auto-detection** - SSH session detection, git repository detection
+3. **Defaults** - Built-in fallback values
+
+Example: Port selection
+```
+PLANNOTATOR_PORT (if set)
+  ↓
+19432 (if PLANNOTATOR_REMOTE=1)
+  ↓
+19432 (if SSH_TTY or SSH_CONNECTION detected)
+  ↓
+Random port (0 - let OS assign)
+```
+
+## Validation
+
+Plannotator validates configuration values at startup:
+
+- **Port numbers** must be 1-65535 (invalid values use defaults)
+- **File paths** are resolved and checked for accessibility
+- **CORS origins** are validated for proper URL format
+- **TTL values** must be positive integers
+
+Warnings are logged to stderr for invalid configurations.

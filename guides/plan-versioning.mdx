@@ -1,0 +1,585 @@
+---
+title: Plan Versioning
+description: Automatic version history tracking for plans in Plannotator
+---
+
+Plannotator automatically saves every plan version to disk, enabling you to track changes across iterations, compare versions, and understand how plans evolved over time.
+
+## Overview
+
+Every time Claude submits a plan (or resubmits after changes), Plannotator:
+
+1. Extracts a slug from the plan's first heading + date
+2. Saves the plan to `~/.plannotator/history/{project}/{slug}/NNN.md`
+3. Deduplicates identical resubmissions (no new file if content matches)
+4. Returns version metadata to the UI for diffing and browsing
+
+**Key features:**
+
+- **Automatic** - No manual action required
+- **Project-scoped** - Plans grouped by git repo or directory
+- **Slug-based** - Same plan heading + date = same plan series
+- **Deduplicated** - Identical resubmissions don't create new versions
+- **Persistent** - Version history saved independently of decision snapshots
+
+## Directory Structure
+
+```
+~/.plannotator/
+├── history/                    # Version history (automatic)
+│   ├── plannotator/           # Project: "plannotator" (from git repo)
+│   │   ├── user-auth-2026-03-03/
+│   │   │   ├── 001.md         # Version 1
+│   │   │   ├── 002.md         # Version 2
+│   │   │   └── 003.md         # Version 3
+│   │   └── api-refactor-2026-03-03/
+│   │       ├── 001.md
+│   │       └── 002.md
+│   └── my-project/            # Project: "my-project"
+│       └── database-migration-2026-03-02/
+│           ├── 001.md
+│           ├── 002.md
+│           └── 003.md
+└── plans/                      # Decision snapshots (user-controlled)
+    ├── user-auth-2026-03-03-approved.md
+    └── api-refactor-2026-03-03-denied.md
+```
+
+**Two storage systems:**
+
+- **`history/`** - Every version, saved automatically, used for diffs
+- **`plans/`** - Final decisions (approved/denied), controlled by "Save to Disk" setting
+
+These are independent. Disabling "Save to Disk" won't affect version history.
+
+## Slug Generation
+
+Slug format: `{sanitized-heading}-YYYY-MM-DD`
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/storage.ts:47`
+
+```typescript
+export function generateSlug(plan: string): string {
+  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const heading = extractFirstHeading(plan);           // First # heading
+  const slug = heading ? sanitizeTag(heading) : null;
+  return slug ? `${slug}-${date}` : `plan-${date}`;
+}
+
+function extractFirstHeading(markdown: string): string | null {
+  const match = markdown.match(/^#\s+(.+)$/m);
+  return match ? match[1].trim() : null;
+}
+```
+
+**Example:**
+
+```markdown
+# User Authentication Implementation
+
+This plan adds OAuth2 support...
+```
+
+Slug: `user-authentication-implementation-2026-03-03`
+
+**Sanitization:**
+
+- Lowercase
+- Replace spaces and special chars with hyphens
+- Remove consecutive hyphens
+- Trim to reasonable length
+
+**Same slug = same plan:**
+
+If Claude resubmits a plan with the same heading on the same day, it's treated as the next version of the same plan series.
+
+```
+First submission:  001.md ("# User Authentication")
+After denial:      002.md ("# User Authentication" - revised)
+After 2nd denial:  003.md ("# User Authentication" - further revised)
+```
+
+## Project Detection
+
+Plans are grouped by project to keep history organized.
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/project.ts`
+
+**Detection order:**
+
+1. **Git repository name** - If cwd is inside a git repo, use the repo name
+2. **Directory name** - Otherwise, use the current directory name
+3. **Fallback** - If detection fails, use `"default"`
+
+**Example:**
+
+```bash
+# Working in a git repo
+$ cd ~/code/plannotator
+$ claude  # Plans saved under "plannotator" project
+
+# Working in a non-git directory
+$ cd ~/Documents/my-notes
+$ claude  # Plans saved under "my-notes" project
+```
+
+**Git detection:**
+
+```typescript
+export async function detectProjectName(): Promise<string> {
+  try {
+    // Try git repo name first
+    const result = await $`git rev-parse --show-toplevel`.quiet();
+    const repoPath = result.stdout.toString().trim();
+    const repoName = repoPath.split('/').pop();
+    if (repoName) return sanitizeTag(repoName);
+  } catch {
+    // Not a git repo, try directory name
+  }
+
+  const cwd = process.cwd();
+  const dirName = cwd.split('/').pop();
+  return dirName ? sanitizeTag(dirName) : 'default';
+}
+```
+
+## Version Saving
+
+When a plan arrives, the server saves it to the history directory.
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/storage.ts:142`
+
+```typescript
+export function saveToHistory(
+  project: string,
+  slug: string,
+  plan: string
+): { version: number; path: string; isNew: boolean } {
+  const historyDir = getHistoryDir(project, slug);
+  const nextVersion = getNextVersionNumber(historyDir);
+
+  // Deduplicate: check if latest version has identical content
+  if (nextVersion > 1) {
+    const latestPath = join(historyDir, `${String(nextVersion - 1).padStart(3, "0")}.md`);
+    try {
+      const existing = readFileSync(latestPath, "utf-8");
+      if (existing === plan) {
+        return { version: nextVersion - 1, path: latestPath, isNew: false };
+      }
+    } catch {
+      // File read failed, proceed with saving
+    }
+  }
+
+  const fileName = `${String(nextVersion).padStart(3, "0")}.md`;
+  const filePath = join(historyDir, fileName);
+  writeFileSync(filePath, plan, "utf-8");
+  return { version: nextVersion, path: filePath, isNew: true };
+}
+```
+
+**Deduplication:**
+
+If the plan content is identical to the latest version, no new file is created. This prevents version spam when Claude resubmits the same plan multiple times (e.g., after a server restart).
+
+**Version numbering:**
+
+Versions are zero-padded to 3 digits for proper sorting:
+
+```
+001.md
+002.md
+...
+099.md
+100.md
+```
+
+## Accessing Version History
+
+### In the UI
+
+**Version Browser (Sidebar):**
+
+1. Click the sidebar toggle (left edge of screen)
+2. Switch to the **Versions** tab
+3. See a list of all versions for the current plan
+4. Click any version to load it
+
+**Version metadata shown:**
+
+- Version number (e.g., "Version 3")
+- Timestamp (when the version was saved)
+- Diff stats vs. current version (e.g., "+5/-2")
+
+**Selecting a base version:**
+
+Click a version in the Version Browser to use it as the diff base. The plan diff updates to show changes from the selected version to the current version.
+
+### Via API
+
+**List all versions for a plan:**
+
+```bash
+curl http://localhost:19432/api/plan/versions
+```
+
+Response:
+
+```json
+[
+  { "version": 1, "timestamp": "2026-03-03T10:00:00.000Z" },
+  { "version": 2, "timestamp": "2026-03-03T10:15:00.000Z" },
+  { "version": 3, "timestamp": "2026-03-03T10:30:00.000Z" }
+]
+```
+
+**Fetch a specific version:**
+
+```bash
+curl http://localhost:19432/api/plan/version?v=2
+```
+
+Response:
+
+```json
+{
+  "plan": "# User Authentication Implementation\n\n...",
+  "version": 2
+}
+```
+
+**List all plans in the current project:**
+
+```bash
+curl http://localhost:19432/api/plan/history
+```
+
+Response:
+
+```json
+[
+  {
+    "slug": "user-auth-2026-03-03",
+    "versions": 3,
+    "lastModified": "2026-03-03T10:30:00.000Z"
+  },
+  {
+    "slug": "api-refactor-2026-03-03",
+    "versions": 2,
+    "lastModified": "2026-03-03T09:00:00.000Z"
+  }
+]
+```
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/index.ts:150`
+
+### From Disk
+
+Version files are plain markdown. You can read them directly:
+
+```bash
+# List versions for a plan
+ls ~/.plannotator/history/plannotator/user-auth-2026-03-03/
+# Output: 001.md  002.md  003.md
+
+# Read version 2
+cat ~/.plannotator/history/plannotator/user-auth-2026-03-03/002.md
+
+# Diff two versions
+diff ~/.plannotator/history/plannotator/user-auth-2026-03-03/001.md \
+     ~/.plannotator/history/plannotator/user-auth-2026-03-03/002.md
+```
+
+## Plan Diff System
+
+When a new version arrives, Plannotator can show what changed.
+
+### Diff Badge
+
+A `+N/-M` badge appears below the document card when a previous version exists:
+
+- **+N** - Lines added since the previous version
+- **-M** - Lines removed since the previous version
+- Click the badge to toggle diff view
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/components/plan-diff/PlanDiffBadge.tsx`
+
+### Diff View Modes
+
+**Rendered (Clean) Mode:**
+
+Color-coded left borders indicate changes:
+
+- **Green** - Added lines
+- **Red with strikethrough** - Removed lines
+- **Yellow** - Modified lines (removed + added in one block)
+
+Rendered markdown is shown (headings, code blocks, etc. are formatted).
+
+**Raw (Git-style) Mode:**
+
+Monospace diff with `+`/`-` prefixes:
+
+```diff
+ # User Authentication Implementation
+
+-Install dependencies:
++Install dependencies with Bun:
+ ```
+-npm install
++bun install
+ ```
+```
+
+**Toggle between modes:**
+
+Click the "View Mode" switcher in the diff toolbar.
+
+**Code reference:**
+- Clean view: `/home/daytona/workspace/source/packages/ui/components/plan-diff/PlanCleanDiffView.tsx`
+- Raw view: `/home/daytona/workspace/source/packages/ui/components/plan-diff/PlanRawDiffView.tsx`
+
+### Diff Engine
+
+Plannotator uses the `diff` npm package for line-level diffs.
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/utils/planDiffEngine.ts`
+
+```typescript
+import { diffLines } from 'diff';
+
+export function computePlanDiff(
+  oldPlan: string,
+  newPlan: string
+): { blocks: PlanDiffBlock[]; stats: PlanDiffStats } {
+  const changes = diffLines(oldPlan, newPlan);
+  const blocks: PlanDiffBlock[] = [];
+  let added = 0, removed = 0;
+
+  for (const change of changes) {
+    if (change.added) {
+      blocks.push({ type: 'added', content: change.value });
+      added += change.count || 0;
+    } else if (change.removed) {
+      blocks.push({ type: 'removed', content: change.value });
+      removed += change.count || 0;
+    } else {
+      blocks.push({ type: 'unchanged', content: change.value });
+    }
+  }
+
+  return { blocks, stats: { added, removed } };
+}
+```
+
+**Grouping consecutive changes:**
+
+If a "removed" block is immediately followed by an "added" block, they're grouped as a "modified" block:
+
+```typescript
+if (blocks[i].type === 'removed' && blocks[i+1]?.type === 'added') {
+  blocks[i] = { type: 'modified', old: blocks[i].content, new: blocks[i+1].content };
+  blocks.splice(i+1, 1);
+}
+```
+
+This makes replacements more readable (yellow, not red + green).
+
+### Selecting Base Versions
+
+By default, the diff compares against the previous version (sent by the server as `previousPlan`).
+
+You can select any version as the diff base:
+
+1. Open the sidebar **Versions** tab
+2. Click a version (e.g., "Version 1")
+3. The diff updates to compare that version against the current version
+
+**Code reference:** `/home/daytona/workspace/source/packages/ui/hooks/usePlanDiff.ts`
+
+```typescript
+const selectBaseVersion = async (version: number) => {
+  const response = await fetch(`/api/plan/version?v=${version}`);
+  const { plan } = await response.json();
+  setBaseVersion(version);
+  setBasePlan(plan);
+  // Diff will recompute automatically
+};
+```
+
+## VS Code Integration
+
+Open plan versions in VS Code for side-by-side diffing.
+
+**How to use:**
+
+1. Click the **Open in VS Code** button in the diff toolbar
+2. Select a base version (or use the current diff base)
+3. Plannotator writes both versions to temporary files
+4. VS Code opens with a split diff view
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/ide.ts`
+
+```typescript
+import { $ } from 'bun';
+
+export async function openEditorDiff(
+  baseContent: string,
+  currentContent: string,
+  baseName: string = 'Base',
+  currentName: string = 'Current'
+): Promise<void> {
+  const tmpDir = await fs.mkdtemp('/tmp/plannotator-diff-');
+  const baseFile = join(tmpDir, `${baseName}.md`);
+  const currentFile = join(tmpDir, `${currentName}.md`);
+
+  await Bun.write(baseFile, baseContent);
+  await Bun.write(currentFile, currentContent);
+
+  await $`code --diff ${baseFile} ${currentFile}`.quiet();
+}
+```
+
+**API endpoint:**
+
+```bash
+curl -X POST http://localhost:19432/api/plan/vscode-diff \
+  -H 'Content-Type: application/json' \
+  -d '{"baseVersion": 2}'
+```
+
+## Version Retention
+
+By default, version files are kept indefinitely.
+
+**Manual cleanup:**
+
+Delete old version directories when no longer needed:
+
+```bash
+# Remove all versions of a plan
+rm -rf ~/.plannotator/history/plannotator/old-plan-2026-01-15/
+
+# Remove an entire project's history
+rm -rf ~/.plannotator/history/old-project/
+```
+
+**Automated cleanup:**
+
+You can set up a cron job to delete old versions:
+
+```bash
+# Delete version directories older than 90 days
+find ~/.plannotator/history -type d -mtime +90 -exec rm -rf {} \;
+```
+
+**Future feature:**
+
+A retention policy setting will allow automatic cleanup (e.g., "Keep last 10 versions" or "Delete after 30 days").
+
+## Best Practices
+
+### Naming Plans Consistently
+
+Use descriptive, consistent headings for related plans:
+
+```markdown
+# User Authentication Implementation
+```
+
+Avoid:
+
+```markdown
+# Plan
+# Implementation Plan
+# Today's Plan
+```
+
+Consistent headings ensure related versions are grouped together.
+
+### Reviewing Changes
+
+Before approving a revised plan:
+
+1. Open the diff view to see what changed
+2. Check that your previous feedback was addressed
+3. Look for unintended changes (regressions)
+4. Use raw mode for precise line-level inspection
+
+### Using Version History for Context
+
+When discussing a plan with teammates:
+
+1. Share the specific version URL (use the Version Browser)
+2. Reference version numbers ("See version 3 for the rationale")
+3. Compare versions to show evolution ("Between v2 and v4, we added error handling")
+
+### Exporting Version History
+
+For archival or documentation:
+
+```bash
+# Create a tarball of all versions for a plan
+tar -czf user-auth-history.tar.gz \
+  ~/.plannotator/history/plannotator/user-auth-2026-03-03/
+
+# Export to a single file with version markers
+for f in ~/.plannotator/history/plannotator/user-auth-2026-03-03/*.md; do
+  echo "=== Version $(basename $f .md) ===" >> merged.md
+  cat $f >> merged.md
+  echo "" >> merged.md
+done
+```
+
+## Troubleshooting
+
+### Version numbers skip
+
+E.g., `001.md`, `003.md`, `005.md` (missing `002.md`, `004.md`).
+
+**Cause:** Deduplication prevented saving identical versions.
+
+**Solution:** This is expected behavior. The version numbers reflect the submission count, not the file count.
+
+### New plan creates separate slug
+
+Expected: `user-auth-2026-03-03/003.md`  
+Actual: `user-auth-updated-2026-03-03/001.md`
+
+**Cause:** The heading changed ("User Auth" → "User Auth Updated").
+
+**Solution:** Keep plan headings consistent across revisions. Only change the heading if it's truly a different plan.
+
+### Diff shows entire plan as changed
+
+Every line is marked added/removed.
+
+**Causes:**
+- Line ending differences (CRLF vs. LF)
+- Encoding differences (UTF-8 vs. ASCII)
+- Whitespace changes (tabs vs. spaces)
+
+**Solutions:**
+- Use consistent line endings (LF recommended)
+- Save files as UTF-8
+- Avoid mixing tabs and spaces
+
+### Version history is empty
+
+No versions appear in the Version Browser.
+
+**Causes:**
+- First submission (no previous versions yet)
+- Project or slug mismatch (check directory names)
+- Permissions issue (can't read history directory)
+
+**Solutions:**
+- Check `~/.plannotator/history/{project}/{slug}/`
+- Verify file permissions (should be readable by your user)
+- Wait for Claude to resubmit (creates version 2)
+
+## Related
+
+- [Sharing and Collaboration](/guides/sharing-and-collaboration) - Share specific plan versions
+- [Annotation Types](/guides/annotation-types) - Annotate plans across versions
+- [Integrations](/guides/integrations) - Export versions to Obsidian or other tools

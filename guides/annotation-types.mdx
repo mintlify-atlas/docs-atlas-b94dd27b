@@ -1,0 +1,355 @@
+---
+title: Annotation Types
+description: Learn about the different annotation types in Plannotator and when to use each one
+---
+
+Plannotator supports five annotation types that let you provide structured feedback on plans, code, and markdown documents. Each type serves a specific purpose in the review workflow.
+
+## Overview
+
+Annotations are stored as structured data with the following core properties:
+
+```typescript
+interface Annotation {
+  id: string;
+  type: AnnotationType;
+  text?: string;              // Your feedback or replacement text
+  originalText: string;       // The selected text from the document
+  createdA: number;           // Timestamp
+  author?: string;            // Your identity (for collaboration)
+  images?: ImageAttachment[]; // Attached screenshots or diagrams
+}
+```
+
+## The Five Annotation Types
+
+### 1. Deletion
+
+Mark text that should be removed from the plan.
+
+**Type:** `DELETION`
+
+**When to use:**
+- Remove unnecessary steps or details
+- Eliminate redundant information
+- Strike out incorrect assumptions
+- Quick redlining in redline mode
+
+**How it works:**
+- Select text you want removed
+- Click the deletion button in the toolbar (or use redline mode for auto-deletion)
+- The text is struck through with a red highlight
+- No additional comment required (though you can add context via a separate comment)
+
+**Example workflow:**
+```
+Original: "First, install Docker, then install Podman as a backup."
+Action: Select "then install Podman as a backup" → Delete
+Result: Text is struck through, signaling removal to the agent
+```
+
+**Shareable format:**
+```typescript
+['D', originalText, author, images?]
+```
+
+### 2. Insertion
+
+Add new content at a specific location in the document.
+
+**Type:** `INSERTION`
+
+**When to use:**
+- Add missing steps to a plan
+- Insert additional context or requirements
+- Suggest new sections or paragraphs
+- Propose additional test cases
+
+**How it works:**
+- Select a short piece of text as the insertion point (context)
+- Click the insertion button in the toolbar
+- Enter the new text to insert after the selection
+- The insertion point is highlighted in green
+
+**Example workflow:**
+```
+Original: "Run the test suite."
+Action: Select "test suite" → Insert → "Also run integration tests with --verbose flag."
+Result: Agent knows to add integration testing step after test suite mention
+```
+
+**Shareable format:**
+```typescript
+['I', contextText, newText, author, images?]
+```
+
+### 3. Replacement
+
+Replace existing text with corrected or improved content.
+
+**Type:** `REPLACEMENT`
+
+**When to use:**
+- Fix incorrect commands or code snippets
+- Update terminology or naming
+- Revise unclear phrasing
+- Correct configuration values
+
+**How it works:**
+- Select the text to replace
+- Click the replacement button in the toolbar
+- Enter the new text that should replace the selection
+- The original text is highlighted in yellow with your replacement shown
+
+**Example workflow:**
+```
+Original: "npm install -g typescript"
+Action: Select "npm install -g" → Replace with → "bun add -d"
+Result: Agent updates the command to use bun instead of npm global install
+```
+
+**Shareable format:**
+```typescript
+['R', originalText, replacementText, author, images?]
+```
+
+### 4. Comment
+
+Add contextual feedback, questions, or suggestions without modifying text.
+
+**Type:** `COMMENT`
+
+**When to use:**
+- Ask clarifying questions
+- Suggest alternatives without demanding changes
+- Provide context or rationale
+- Highlight potential issues to consider
+- Praise good approaches
+
+**How it works:**
+- Select relevant text as the anchor point
+- Click the comment button in the toolbar
+- Enter your comment or question
+- The text is highlighted in blue with a comment icon
+
+**Example workflow:**
+```
+Original: "Use Redis for caching."
+Action: Select "Redis" → Comment → "Do we have Redis in production? Consider using the existing Memcached instance instead."
+Result: Agent receives your question and can respond or adjust the plan
+```
+
+**Shareable format:**
+```typescript
+['C', originalText, commentText, author, images?]
+```
+
+### 5. Global Comment
+
+Add document-level feedback not tied to specific text.
+
+**Type:** `GLOBAL_COMMENT`
+
+**When to use:**
+- Provide overall assessment of the plan
+- Raise high-level concerns or questions
+- Add context that applies to the entire document
+- Note missing sections or requirements
+- Summarize review feedback
+
+**How it works:**
+- Click the global comment button (no text selection needed)
+- Enter your document-level feedback
+- The comment appears in the annotations sidebar
+- Not anchored to any specific location in the text
+
+**Example workflow:**
+```
+Action: Click global comment → "This plan looks great overall, but we should consider backwards compatibility with the v1 API. Can we add a migration strategy section?"
+Result: Agent receives high-level feedback to guide the next iteration
+```
+
+**Shareable format:**
+```typescript
+['G', commentText, author, images?]
+```
+
+## Working with Images
+
+All annotation types support image attachments for visual feedback:
+
+```typescript
+interface ImageAttachment {
+  path: string;  // Temporary file path
+  name: string;  // Human-readable label (e.g., "login-mockup")
+}
+```
+
+**To attach images:**
+1. Create your annotation (any type)
+2. Click the image attachment button
+3. Select or drag-and-drop your image
+4. Add a descriptive name (e.g., "proposed-architecture")
+5. The image is uploaded and referenced in the annotation
+
+**Use cases:**
+- Attach architecture diagrams for high-level feedback
+- Include screenshots of error messages
+- Share mockups or design references
+- Annotate with visual examples
+
+**In exported feedback:**
+```markdown
+## Annotations
+
+**Comment on "user authentication flow":**
+> I think we should use OAuth2 instead. See the reference architecture:
+> [proposed-oauth-flow] /tmp/plannotator-abc123.png
+```
+
+## Editor Modes
+
+Plannotator offers two modes that affect how annotations are created:
+
+### Selection Mode (Default)
+
+Precise annotation with explicit type selection.
+
+**Workflow:**
+1. Select text
+2. Toolbar appears with all annotation types
+3. Click the type you want (deletion, insertion, replacement, comment)
+4. Enter additional text if required
+5. Annotation is created
+
+**Best for:**
+- Thoughtful, structured reviews
+- Mixed feedback types in one session
+- Collaborative reviews with multiple annotators
+
+### Redline Mode
+
+Fast deletion-focused workflow for quick redlining.
+
+**Workflow:**
+1. Toggle redline mode in the toolbar
+2. Select text
+3. Deletion annotation is created automatically
+4. Continue selecting and deleting
+
+**Best for:**
+- Rapid plan cleanup
+- Removing verbose or redundant sections
+- Quick first-pass reviews
+- Legal-style redlining workflows
+
+**To switch modes:**
+Click the mode toggle in the top toolbar. The active mode is highlighted.
+
+## Code Review Annotations
+
+When using `/plannotator-review` for code diffs, annotations work differently:
+
+```typescript
+interface CodeAnnotation {
+  type: 'comment' | 'suggestion' | 'concern';
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  side: 'old' | 'new';  // Which side of the diff
+  text?: string;
+  suggestedCode?: string;
+}
+```
+
+**Code annotation types:**
+- **Comment:** General feedback on specific lines
+- **Suggestion:** Proposed code changes with diffs
+- **Concern:** Flag potential issues or risks
+
+**Creating code annotations:**
+1. Select one or more lines in the diff viewer
+2. Choose annotation type from the context menu
+3. For suggestions, edit the code in the inline editor
+4. Submit feedback to send all annotations to the agent
+
+See [Code Review](/guides/code-review) for detailed workflows.
+
+## Best Practices
+
+### Be Specific
+
+Anchor annotations to precise text selections:
+
+```diff
+- Comment on entire section: "This section needs work"
++ Comment on specific sentence: "This assumes Python 3.8, but our production environment uses 3.11. Update version requirements."
+```
+
+### Use the Right Type
+
+- **Deletion:** Only for definitive removals, not "maybe remove this"
+- **Replacement:** When you know the exact correct alternative
+- **Comment:** For questions, suggestions, or "consider doing X"
+- **Global:** For document-level feedback that doesn't fit elsewhere
+
+### Combine Types Effectively
+
+```markdown
+Example review flow:
+1. Global comment: "Overall solid plan, but missing error handling"
+2. Insertion: Add error handling section after step 3
+3. Replacement: Change "throw error" to "log and return gracefully"
+4. Comment on error logging: "Should we use our standard logger or console?"
+5. Deletion: Remove the debug logging in production step
+```
+
+### Add Context
+
+Even for deletions and replacements, consider adding a comment explaining why:
+
+```
+Deletion: "docker-compose up -d"
+Global comment: "Removed docker-compose commands because we're using Kubernetes in this project, not Docker Compose."
+```
+
+### Use Images Wisely
+
+Attach images when:
+- Words alone can't convey the feedback
+- Showing example UI/UX is helpful
+- Referencing external diagrams or specs
+- Illustrating complex architectural changes
+
+Avoid:
+- Uploading images instead of typing short text
+- Attaching large, unrelated screenshots
+- Using images for code snippets (use replacement/insertion instead)
+
+## Exporting and Sharing
+
+When you approve or deny a plan, annotations are exported in human-readable markdown:
+
+```markdown
+## Annotations
+
+**Deletion:**
+> ~~Install Docker Compose~~
+
+**Replacement on "npm install -g typescript":**
+> Replace with: `bun add -d typescript`
+
+**Comment on "Redis for caching":**
+> Do we have Redis in production? Consider using the existing Memcached instance.
+
+**Global comment:**
+> This plan looks great overall, but we should consider backwards compatibility with the v1 API.
+```
+
+Annotations are also preserved when sharing via URL. See [Sharing and Collaboration](/guides/sharing-and-collaboration) for details.
+
+## Related
+
+- [Sharing and Collaboration](/guides/sharing-and-collaboration) - Share annotated plans with your team
+- [Plan Versioning](/guides/plan-versioning) - Track changes across plan iterations
+- [Plan Review](/features/plan-review) - Complete plan review workflow

@@ -1,0 +1,700 @@
+---
+title: Features
+description: Complete guide to Plannotator's visual plan review, code annotation, version tracking, collaboration tools, and integrations.
+---
+
+# Features
+
+Plannotator provides a comprehensive set of tools for reviewing AI-generated plans, annotating code, tracking changes, and collaborating with your team.
+
+## Visual Plan Review
+
+The core feature of Plannotator is its visual plan review interface that transforms markdown plans into interactive, annotatable documents.
+
+### Annotation Modes
+
+Choose from three editor modes to match your workflow:
+
+<CodeGroup>
+```typescript Selection Mode
+// Default mode - select text, then choose annotation type
+// Supports: Deletion, Replacement, Insertion, Comment
+
+interface Annotation {
+  type: 'DELETION' | 'REPLACEMENT' | 'INSERTION' | 'COMMENT';
+  originalText: string;  // The selected text
+  text?: string;         // Comment or replacement text
+  images?: ImageAttachment[];
+}
+```
+
+```typescript Comment Mode
+// Optimized for leaving comments
+// Select text → automatically creates comment annotation
+// Ideal for: asking questions, providing context
+```
+
+```typescript Redline Mode
+// Legal document review style
+// Select text → automatically creates deletion
+// Ideal for: removing sections, cutting scope
+```
+</CodeGroup>
+
+### Annotation Types
+
+<Steps>
+  <Step title="Deletion">
+    Remove sections that are out of scope or incorrect:
+
+    ```markdown
+    ### DELETION at line 42-45
+    > Remove WebSocket implementation - using REST API instead
+    ```
+
+    **Use cases:**
+    - Remove features from MVP scope
+    - Delete incorrect assumptions
+    - Cut unnecessary complexity
+  </Step>
+
+  <Step title="Replacement">
+    Suggest alternative implementations or corrections:
+
+    ```markdown
+    ### REPLACEMENT at line 67-72
+    Original:
+    > Use SQLite for local development database
+
+    Replace with:
+    > Use PostgreSQL for both dev and prod to ensure parity
+    ```
+
+    **Use cases:**
+    - Suggest better approaches
+    - Correct technical details
+    - Change technology choices
+  </Step>
+
+  <Step title="Insertion">
+    Add missing steps, requirements, or context:
+
+    ```markdown
+    ### INSERTION after line 89
+    Insert:
+    > Add error handling for network timeouts
+    > - Retry with exponential backoff
+    > - Show user-friendly error message
+    > - Log failures for debugging
+    ```
+
+    **Use cases:**
+    - Add missing edge cases
+    - Insert forgotten requirements
+    - Include security considerations
+  </Step>
+
+  <Step title="Comment">
+    Ask questions or provide clarifications:
+
+    ```markdown
+    ### COMMENT at line 104
+    > How does this handle concurrent updates?
+    > Should we use optimistic locking?
+    ```
+
+    **Use cases:**
+    - Ask clarifying questions
+    - Note potential issues
+    - Request more detail
+  </Step>
+</Steps>
+
+### Image Attachments
+
+Attach screenshots, diagrams, or mockups to any annotation:
+
+- **Paste images** directly from clipboard (Cmd/Ctrl+V)
+- **Annotate images** with drawings before attaching
+- **Name images** with descriptive labels
+- **Attach to global comments** for overall plan feedback
+
+```typescript
+// Image annotation flow
+interface ImageAttachment {
+  path: string;   // Temporary file path
+  name: string;   // Human-readable label (e.g., "login-mockup")
+}
+
+// In exported feedback:
+// [login-mockup] /tmp/plannotator-abc123.png
+```
+
+<Tip>
+  Images are automatically uploaded to `/api/upload` and referenced by path. The agent receives both the file path and descriptive name.
+</Tip>
+
+### Collaborative Annotations
+
+When multiple people review the same plan:
+
+- **Set your identity** in Settings (e.g., "Alice" or "Design Team")
+- **Annotations show author** name in the panel
+- **Filter by author** when reviewing combined feedback
+- **Import annotations** from shared URLs preserves authorship
+
+```typescript
+// Each annotation tracks its author
+interface Annotation {
+  author?: string;  // "Alice", "Bob", null for anonymous
+  createdAt: number;
+  // ... other fields
+}
+```
+
+## Plan Versioning & Diff
+
+Every plan is automatically saved to `~/.plannotator/history/{project}/{slug}/` with incremental version numbers.
+
+### Automatic Version Tracking
+
+```bash
+~/.plannotator/history/
+└── my-project/
+    └── add-user-authentication-2026-03-03/
+        ├── 001.md  # Initial plan
+        ├── 002.md  # After first deny → revise
+        └── 003.md  # After second revision
+```
+
+**Version creation triggers:**
+- Agent submits a new plan
+- You deny a plan and agent revises it
+- Plan content differs from latest version (deduplicated)
+
+### Plan Diff Viewer
+
+When a plan has multiple versions, click the diff badge to see changes:
+
+<Info>
+  The diff badge shows `+N/-M` where N = lines added, M = lines removed.
+</Info>
+
+**Two view modes:**
+
+1. **Rendered (Clean) Diff** - Color-coded borders on rendered markdown:
+   - 🟢 Green left border = Added content
+   - 🔴 Red left border + strikethrough = Removed content
+   - 🟡 Yellow left border = Modified (removed + added)
+   - No border = Unchanged
+
+2. **Raw Diff** - Git-style monospace diff:
+   ```diff
+   - Use REST API for communication
+   + Use WebSocket for real-time updates
+     Set up connection pooling
+   ```
+
+### Version Browser Sidebar
+
+Open the sidebar and switch to the Versions tab to:
+
+- **Browse all versions** of the current plan
+- **Select base version** for diff comparison
+- **View version metadata** (timestamp, version number)
+- **Open in VS Code** to compare side-by-side
+
+```typescript
+// Fetch specific version
+GET /api/plan/version?v=2
+
+// List all versions
+GET /api/plan/versions
+// Returns: {
+//   project: "my-project",
+//   slug: "add-auth-2026-03-03",
+//   versions: [
+//     { version: 1, timestamp: "2026-03-03T10:00:00Z" },
+//     { version: 2, timestamp: "2026-03-03T10:15:00Z" }
+//   ]
+// }
+```
+
+### VS Code Integration
+
+Open any version diff directly in VS Code:
+
+```typescript
+// Click "Open in VS Code" button
+POST /api/plan/vscode-diff
+Body: { baseVersion: 1 }
+
+// Opens VS Code with:
+// Left: ~/.plannotator/history/{project}/{slug}/001.md
+// Right: ~/.plannotator/history/{project}/{slug}/003.md (current)
+```
+
+<Warning>
+  VS Code integration requires the `code` CLI to be in your PATH. Install via VS Code Command Palette: "Shell Command: Install 'code' command in PATH".
+</Warning>
+
+## Code Review
+
+Review git diffs before committing changes to your codebase.
+
+### Starting a Code Review
+
+**Claude Code or OpenCode:**
+```bash
+/plannotator-review
+```
+
+**What it does:**
+1. Runs `git diff HEAD` to capture uncommitted changes
+2. Starts review server on random port
+3. Opens browser with interactive diff viewer
+4. Lets you annotate specific lines with comments or suggestions
+5. Sends feedback back to agent
+
+### Code Annotation Types
+
+```typescript
+interface CodeAnnotation {
+  type: 'comment' | 'suggestion' | 'concern';
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  side: 'old' | 'new';  // Left (deletions) or right (additions)
+  text?: string;
+  suggestedCode?: string;  // For suggestions
+}
+```
+
+**Example workflow:**
+
+<Steps>
+  <Step title="Agent makes changes">
+    Your agent modifies several files based on the approved plan.
+  </Step>
+
+  <Step title="Review before commit">
+    ```bash
+    /plannotator-review
+    ```
+
+    Opens diff viewer showing all uncommitted changes.
+  </Step>
+
+  <Step title="Annotate specific lines">
+    - Click lines to select range
+    - Choose annotation type (comment, suggestion, concern)
+    - Add feedback text or suggested code
+  </Step>
+
+  <Step title="Send feedback to agent">
+    Click "Send Feedback" to return annotations to the agent
+  </Step>
+
+</Steps>
+
+### Git Context Awareness
+
+The review UI detects your git repository and offers diff options:
+
+- **Uncommitted changes** (`git diff HEAD`)
+- **Staged changes** (`git diff --staged`)
+- **Branch comparison** (`git diff main...feature-branch`)
+- **Commit range** (`git diff abc123..def456`)
+
+```typescript
+// packages/server/git.ts
+export interface GitContext {
+  currentBranch: string;
+  defaultBranch: string;  // main or master
+  hasUncommitted: boolean;
+  hasStaged: boolean;
+  availableBranches: string[];
+}
+```
+
+## Sharing & Collaboration
+
+Share plans securely with team members for collaborative review.
+
+### Share URL Generation
+
+**Small plans** (< ~1MB compressed):
+- Encoded entirely in URL hash using deflate compression
+- No server storage - data stays in the URL
+- Instant generation, no network request
+
+**Large plans** (> ~1MB):
+- Encrypted with AES-256-GCM in browser
+- Uploaded to paste service as ciphertext
+- Decryption key only in URL fragment (`#key=...`)
+- Zero-knowledge: server cannot decrypt
+
+<CodeGroup>
+```typescript Hash-based Share
+// Small plan flow
+const payload = { p: plan, a: annotations, g: globalAttachments };
+const json = JSON.stringify(payload);
+const compressed = await compressDeflate(json);
+const base64 = btoa(String.fromCharCode(...compressed));
+const urlSafe = base64.replace(/\+/g, '-').replace(/\//g, '_');
+
+const shareUrl = `https://share.plannotator.ai#${urlSafe}`;
+// Size: ~50KB for typical plan
+```
+
+```typescript Encrypted Short URL
+// Large plan flow
+const key = await crypto.subtle.generateKey(
+  { name: 'AES-GCM', length: 256 },
+  true,
+  ['encrypt', 'decrypt']
+);
+
+const iv = crypto.getRandomValues(new Uint8Array(12));
+const ciphertext = await crypto.subtle.encrypt(
+  { name: 'AES-GCM', iv },
+  key,
+  textEncoder.encode(json)
+);
+
+const { id } = await fetch('/api/paste', {
+  method: 'POST',
+  body: JSON.stringify({
+    data: btoa(ciphertext),
+    iv: btoa(iv)
+  })
+});
+
+const exportedKey = await crypto.subtle.exportKey('raw', key);
+const shortUrl = `https://share.plannotator.ai/${id}#key=${btoa(exportedKey)}`;
+// Size: ~30 chars for any plan size
+```
+</CodeGroup>
+
+### Collaboration Workflow
+
+<Steps>
+  <Step title="Share plan">
+    Click Export → Copy Share Link. Send URL to colleague.
+  </Step>
+
+  <Step title="Colleague reviews">
+    They open the URL, see your plan and annotations. They set their identity ("Bob") and add their own annotations.
+  </Step>
+
+  <Step title="Export combined review">
+    Colleague clicks Export → Copy Share Link. This creates a new URL with both sets of annotations.
+  </Step>
+
+  <Step title="Import feedback">
+    You click Import Review, paste their URL. Their annotations merge into your session with author labels.
+  </Step>
+
+  <Step title="Send to agent">
+    Click "Send Feedback" to return combined annotations from you and Bob:
+
+    ```markdown
+    ## Requested Changes
+
+    ### DELETION at line 42 (Author: Alice)
+    > Remove this feature - out of scope
+
+    ### COMMENT at line 67 (Author: Bob)
+    > This conflicts with the new auth system
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Annotations from shared URLs preserve authorship. Set your identity before annotating so others can see who made each change.
+</Tip>
+
+### Privacy & Security
+
+**Hash-based shares:**
+- Data never leaves your browser
+- URL fragment (`#...`) not sent to servers
+- No storage, no tracking, no logs
+- Unlimited size for URL length limits (~2MB in modern browsers)
+
+**Encrypted short URLs:**
+- Plan encrypted before upload (AES-256-GCM)
+- Server stores only ciphertext
+- Decryption key in URL fragment (never sent to server)
+- Auto-delete after 7 days
+- Similar to [PrivateBin](https://privatebin.info/) architecture
+
+<Warning>
+  Anyone with the full share URL can decrypt and view the plan. Treat share URLs like passwords.
+</Warning>
+
+## Notes App Integration
+
+Save approved plans directly to your notes apps.
+
+### Obsidian Integration
+
+```typescript
+// Settings → Notes → Obsidian
+interface ObsidianConfig {
+  enabled: boolean;
+  vaultPath: string;        // e.g., "/Users/alice/Obsidian/Work"
+  folder: string;           // e.g., "plannotator" or "plans/ai"
+  filenameFormat?: string;  // e.g., "plan-{date}-{slug}"
+}
+
+// On approve, saves to:
+// {vaultPath}/{folder}/{slug}.md
+```
+
+**Features:**
+- Auto-detects Obsidian vaults on macOS/Linux
+- Custom folder paths (supports nested folders)
+- Filename format templates with `{date}`, `{slug}`, `{project}` variables
+- Frontmatter preservation
+
+**Saved file includes:**
+```markdown
+---
+title: Implementation Plan
+date: 2026-03-03
+status: approved
+---
+
+# Implementation Plan
+...(plan content)...
+
+---
+
+## Annotations
+...(your feedback)...
+```
+
+### Bear Integration
+
+```typescript
+// Settings → Notes → Bear
+interface BearConfig {
+  enabled: boolean;
+}
+
+// On approve, opens Bear with:
+bear://x-callback-url/create
+  ?title={slug}
+  &text={plan}
+  &tags=plannotator,ai-plans
+```
+
+**Features:**
+- One-click save to Bear
+- Automatic tagging with `#plannotator` and `#ai-plans`
+- Preserves markdown formatting
+- Includes annotations as separate section
+
+### Custom Directory
+
+```typescript
+// Settings → Plan Save
+interface PlanSaveSettings {
+  enabled: boolean;
+  customPath?: string;  // Supports ~ for home directory
+}
+
+// Default: ~/.plannotator/plans/{slug}-approved.md
+// Custom: ~/Documents/AI Plans/{slug}-approved.md
+```
+
+<Tip>
+  Combine notes app integration with plan save for automatic archival:
+  - Obsidian: long-term searchable archive
+  - Plan save directory: quick access to recent decisions
+</Tip>
+
+## Markdown File Annotation
+
+Annotate any markdown file in your project and send feedback to the agent.
+
+### Usage
+
+**Claude Code or OpenCode:**
+```bash
+/plannotator-annotate README.md
+/plannotator-annotate docs/architecture.md
+/plannotator-annotate ./design/api-spec.md
+```
+
+**What it does:**
+1. Reads the markdown file from disk
+2. Opens annotation UI (same as plan review)
+3. Lets you annotate any section
+4. Returns annotations as structured feedback
+
+**Example workflow:**
+
+<Steps>
+  <Step title="You need to update docs">
+    Ask agent: "Update the README to include new API endpoints"
+  </Step>
+
+  <Step title="Review current README first">
+    ```bash
+    /plannotator-annotate README.md
+    ```
+  </Step>
+
+  <Step title="Annotate what needs changing">
+    - Mark outdated sections for deletion
+    - Comment on sections that need expansion
+    - Insert notes about missing content
+  </Step>
+
+  <Step title="Send to agent">
+    Annotations become instructions:
+
+    ```markdown
+    ## Changes to README.md
+
+    ### DELETION at line 42-50
+    > Remove old API examples - these endpoints are deprecated
+
+    ### INSERTION after line 67
+    > Add section for new WebSocket events:
+    > - connection.opened
+    > - message.received
+    > - connection.closed
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  Annotate mode uses the same UI as plan review but sends feedback via `/api/feedback` instead of approve/deny.
+</Info>
+
+## UI Features
+
+### Table of Contents
+
+- **Auto-generated** from heading hierarchy
+- **Active section highlighting** as you scroll
+- **Jump to section** with one click
+- **Collapsible sidebar** to save screen space
+- **Annotation indicators** show which sections have feedback
+
+```typescript
+// Sidebar tracks active section via Intersection Observer
+const activeSection = useActiveSection(containerRef, headingCount);
+```
+
+### Theme Support
+
+- **Dark mode** (default) - optimized for extended review sessions
+- **Light mode** - for daytime or bright environments
+- **System preference** - matches OS setting
+- **Per-device persistence** via cookies
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd/Ctrl + Enter` | Approve (if no annotations) or Send Feedback |
+| `Cmd/Ctrl + S` | Quick save to default notes app |
+| `Escape` | Close modals, exit diff view |
+
+### Mobile-Responsive
+
+- **Collapsible panels** for small screens
+- **Touch-optimized** annotation toolbar
+- **Readable text** at all sizes
+- **Swipe gestures** for sidebar (planned)
+
+<Tip>
+  On mobile, use landscape orientation for better split-view experience with annotation panel.
+</Tip>
+
+## Agent-Specific Features
+
+### Claude Code
+
+- **Permission mode selection** - choose between "Bypass Permissions" and "Ask Every Time"
+- **Hook integration** - automatic plan interception via `PermissionRequest`
+- **Slash commands** - `/plannotator-review`, `/plannotator-annotate`
+
+### OpenCode
+
+- **Agent switching** - approve plans with a different agent
+- **Tool-based integration** - `submit_plan` tool for explicit plan submission
+- **Event handlers** - intercepts review/annotate commands
+
+```typescript
+// OpenCode agent switch
+interface AgentSwitchSettings {
+  enabled: boolean;
+  selectedAgent?: string;  // "gpt-4", "claude-3-opus", custom agent
+  customAgentName?: string;
+}
+
+// On approve:
+POST /api/approve
+Body: { agentSwitch: "gpt-4" }
+```
+
+### Pi
+
+- **Plan mode flag** - `pi --plan` to enable plan review
+- **Toggle during session** - `/plannotator` to enable/disable
+- **Extension-based** - installed via `pi install npm:@plannotator/pi-extension`
+
+## Environment Configuration
+
+Customize Plannotator behavior with environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|--------|
+| `PLANNOTATOR_REMOTE` | Enable remote mode (fixed port, no browser open) | auto-detect |
+| `PLANNOTATOR_PORT` | Fixed port to use | `19432` (remote), random (local) |
+| `PLANNOTATOR_BROWSER` | Custom browser command (macOS/Linux/Windows) | system default |
+| `PLANNOTATOR_SHARE_URL` | Self-hosted share portal URL | `https://share.plannotator.ai` |
+| `PLANNOTATOR_PASTE_URL` | Self-hosted paste service URL | `https://plannotator-paste...` |
+| `PLANNOTATOR_SHARE` | Disable sharing (`disabled`) | enabled |
+
+<CodeGroup>
+```bash macOS/Linux
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999
+export PLANNOTATOR_BROWSER="/Applications/Firefox.app"
+```
+
+```powershell Windows
+$env:PLANNOTATOR_REMOTE = "1"
+$env:PLANNOTATOR_PORT = "9999"
+$env:PLANNOTATOR_BROWSER = "C:\\Program Files\\Firefox\\firefox.exe"
+```
+
+```bash Remote Session (SSH/Devcontainer)
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=19432
+# Server will print share link to stderr
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation/claude-code">
+    Platform-specific installation for all agents
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/advanced/configuration">
+    Advanced configuration and customization
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/advanced/self-hosting">
+    Host your own share portal and paste service
+  </Card>
+  <Card title="Architecture" icon="wrench" href="/advanced/architecture">
+    Technical architecture and internals
+  </Card>
+</CardGroup>

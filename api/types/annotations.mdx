@@ -1,0 +1,247 @@
+---
+title: 'Annotation Types'
+description: 'Annotation and AnnotationType for plan review markup'
+---
+
+## Overview
+
+Annotations are the core data structure for marking up plans and documents in Plannotator. Each annotation represents a user's feedback on a specific text selection, such as a deletion, insertion, replacement, or comment.
+
+## AnnotationType
+
+Defines the type of feedback being provided.
+
+```typescript
+enum AnnotationType {
+  DELETION = 'DELETION',
+  INSERTION = 'INSERTION',
+  REPLACEMENT = 'REPLACEMENT',
+  COMMENT = 'COMMENT',
+  GLOBAL_COMMENT = 'GLOBAL_COMMENT',
+}
+```
+
+### Enum Values
+
+<ParamField path="DELETION" type="string">
+  Mark text for removal. Used in redline mode to strike through unwanted content.
+</ParamField>
+
+<ParamField path="INSERTION" type="string">
+  Suggest adding new text at a specific location.
+</ParamField>
+
+<ParamField path="REPLACEMENT" type="string">
+  Replace selected text with alternative content.
+</ParamField>
+
+<ParamField path="COMMENT" type="string">
+  Add a comment or note on selected text without suggesting changes.
+</ParamField>
+
+<ParamField path="GLOBAL_COMMENT" type="string">
+  Add a comment that applies to the entire document rather than a specific selection.
+</ParamField>
+
+## Annotation
+
+Represents a single annotation on a document.
+
+```typescript
+interface Annotation {
+  id: string;
+  blockId: string;
+  startOffset: number;
+  endOffset: number;
+  type: AnnotationType;
+  text?: string;
+  originalText: string;
+  createdA: number;
+  author?: string;
+  images?: ImageAttachment[];
+  startMeta?: {
+    parentTagName: string;
+    parentIndex: number;
+    textOffset: number;
+  };
+  endMeta?: {
+    parentTagName: string;
+    parentIndex: number;
+    textOffset: number;
+  };
+}
+```
+
+### Fields
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the annotation. Generated using timestamp or UUID.
+</ResponseField>
+
+<ResponseField name="blockId" type="string" required>
+  Legacy field for block-level annotations. Not used with web-highlighter selections that can span multiple blocks.
+</ResponseField>
+
+<ResponseField name="startOffset" type="number" required>
+  Legacy character offset for the start of the selection within the block.
+</ResponseField>
+
+<ResponseField name="endOffset" type="number" required>
+  Legacy character offset for the end of the selection within the block.
+</ResponseField>
+
+<ResponseField name="type" type="AnnotationType" required>
+  The type of annotation (DELETION, INSERTION, REPLACEMENT, COMMENT, or GLOBAL_COMMENT).
+</ResponseField>
+
+<ResponseField name="text" type="string">
+  The annotation text content:
+  - For COMMENT: the comment text
+  - For REPLACEMENT: the replacement text
+  - For INSERTION: the text to insert
+  - For DELETION: typically null
+</ResponseField>
+
+<ResponseField name="originalText" type="string" required>
+  The text that was selected when creating the annotation. Used to re-locate the annotation when rendering shared URLs.
+</ResponseField>
+
+<ResponseField name="createdA" type="number" required>
+  Unix timestamp (milliseconds) when the annotation was created.
+</ResponseField>
+
+<ResponseField name="author" type="string">
+  Tater identity of the annotation author. Used for collaborative sharing to distinguish between multiple reviewers.
+</ResponseField>
+
+<ResponseField name="images" type="ImageAttachment[]">
+  Array of attached images with human-readable names. Users can attach screenshots or mockups to annotations.
+</ResponseField>
+
+<ResponseField name="startMeta" type="object">
+  Web-highlighter metadata for cross-element selections. Stores DOM position information for the start of the selection.
+  
+  <Expandable title="properties">
+    <ResponseField name="parentTagName" type="string">
+      HTML tag name of the parent element (e.g., "P", "H1").
+    </ResponseField>
+    <ResponseField name="parentIndex" type="number">
+      Zero-based index of the parent element among siblings.
+    </ResponseField>
+    <ResponseField name="textOffset" type="number">
+      Character offset within the text node.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="endMeta" type="object">
+  Web-highlighter metadata for the end position of the selection. Same structure as startMeta.
+  
+  <Expandable title="properties">
+    <ResponseField name="parentTagName" type="string">
+      HTML tag name of the parent element.
+    </ResponseField>
+    <ResponseField name="parentIndex" type="number">
+      Zero-based index of the parent element among siblings.
+    </ResponseField>
+    <ResponseField name="textOffset" type="number">
+      Character offset within the text node.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## ImageAttachment
+
+Represents an image attached to an annotation.
+
+```typescript
+interface ImageAttachment {
+  path: string;
+  name: string;
+}
+```
+
+<ResponseField name="path" type="string" required>
+  Temporary file path where the image is stored (e.g., "/tmp/upload-1234.png").
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Human-readable label for the image (e.g., "login-mockup", "error-screenshot").
+</ResponseField>
+
+## Usage Examples
+
+### Creating a GLOBAL_COMMENT Annotation
+
+```typescript
+const globalComment: Annotation = {
+  id: `global-${Date.now()}`,
+  blockId: '',
+  startOffset: 0,
+  endOffset: 0,
+  type: AnnotationType.GLOBAL_COMMENT,
+  text: 'Overall the plan looks good, but needs more detail on error handling.',
+  originalText: '',
+  createdA: Date.now(),
+  author: 'alice@example.com',
+};
+```
+
+### Creating a DELETION Annotation
+
+```typescript
+const deletion: Annotation = {
+  id: `ann-${Date.now()}`,
+  blockId: 'block-5',
+  startOffset: 0,
+  endOffset: 42,
+  type: AnnotationType.DELETION,
+  originalText: 'This paragraph should be removed entirely.',
+  createdA: Date.now(),
+  author: 'bob@example.com',
+};
+```
+
+### Creating a REPLACEMENT with Image Attachment
+
+```typescript
+const replacement: Annotation = {
+  id: `ann-${Date.now()}`,
+  blockId: 'block-12',
+  startOffset: 10,
+  endOffset: 35,
+  type: AnnotationType.REPLACEMENT,
+  text: 'Use a tabbed interface instead',
+  originalText: 'Use a dropdown menu here',
+  createdA: Date.now(),
+  author: 'carol@example.com',
+  images: [
+    {
+      path: '/tmp/upload-5678.png',
+      name: 'tabbed-ui-mockup'
+    }
+  ],
+};
+```
+
+### Checking Annotation Type
+
+```typescript
+function getAnnotationColor(annotation: Annotation): string {
+  if (annotation.type === AnnotationType.DELETION) {
+    return 'text-destructive';
+  } else if (annotation.type === AnnotationType.COMMENT) {
+    return 'text-muted-foreground';
+  } else if (annotation.type === AnnotationType.INSERTION) {
+    return 'text-secondary';
+  } else if (annotation.type === AnnotationType.REPLACEMENT) {
+    return 'text-primary';
+  }
+  return 'text-foreground';
+}
+```
+
+## Related Types
+
+- [Block](/api/types/blocks) - Markdown blocks that annotations attach to
+- [CodeAnnotation](/api/types/code-annotations) - Annotations for code review

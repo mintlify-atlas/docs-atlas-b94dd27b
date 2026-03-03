@@ -1,0 +1,242 @@
+---
+title: Paste Service API
+description: API endpoints for the paste service (short URL generation)
+---
+
+The Paste Service provides compressed data storage for generating short URLs. It's used by Plannotator to create shareable links for large plans that exceed URL length limits.
+
+## Service Deployment
+
+The paste service can be deployed in two ways:
+
+1. **Self-hosted** - Bun server on port 19433 with filesystem storage
+2. **Cloudflare Worker** - Serverless deployment with Cloudflare KV storage
+
+Default hosted instance: `https://plannotator-paste.plannotator.workers.dev`
+
+## Configuration
+
+The service has the following configuration limits:
+
+- **Max size**: 512 KB (compressed data)
+- **TTL**: 7 days (data expiration)
+- **ID format**: 8-character alphanumeric (e.g., `aB3xY9Kp`)
+
+## Create Paste
+
+<RequestExample>
+```bash curl
+curl -X POST https://plannotator-paste.plannotator.workers.dev/api/paste \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": "eJyLrlZSKMnPS84vyklRslJQUCjPL8pJUbIy0DHUM9Az1TPRM9Yz0jM..."
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 201
+{
+  "id": "aB3xY9Kp"
+}
+```
+
+```json 400
+{
+  "error": "Missing or invalid \"data\" field"
+}
+```
+
+```json 413
+{
+  "error": "Payload too large (max 512 KB compressed)"
+}
+```
+</ResponseExample>
+
+Stores compressed plan data and returns a short ID for retrieval.
+
+<ParamField body="data" type="string" required>
+  Compressed and base64-encoded plan data. The data should be:
+  1. JSON stringified
+  2. Compressed with deflate-raw
+  3. Base64 encoded
+  4. URL-safe characters (`+/=` replaced with `-_`)
+</ParamField>
+
+<ResponseField name="id" type="string">
+  8-character unique ID for retrieving the paste
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the operation failed
+</ResponseField>
+
+## Get Paste
+
+<RequestExample>
+```bash curl
+curl https://plannotator-paste.plannotator.workers.dev/api/paste/aB3xY9Kp
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "data": "eJyLrlZSKMnPS84vyklRslJQUCjPL8pJUbIy0DHUM9Az1TPRM9Yz0jM..."
+}
+```
+
+```json 404
+{
+  "error": "Paste not found or expired"
+}
+```
+</ResponseExample>
+
+Retrieves stored compressed data by ID.
+
+<ParamField path="id" type="string" required>
+  The 8-character paste ID returned from create paste
+</ParamField>
+
+<ResponseField name="data" type="string">
+  The compressed and base64-encoded data that was stored
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if paste not found or expired
+</ResponseField>
+
+## CORS Support
+
+All endpoints support CORS with the following headers:
+
+```http
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+```
+
+Preflight OPTIONS requests are supported on all endpoints.
+
+## Data Format
+
+The paste service stores opaque compressed data. For Plannotator plans, the data format before compression is:
+
+```typescript
+interface SharePayload {
+  p: string; // Plan markdown
+  a: ShareableAnnotation[]; // Compact annotations
+  g?: ShareableImage[]; // Global attachments
+}
+```
+
+### Compression Pipeline
+
+1. `JSON.stringify(payload)`
+2. `CompressionStream('deflate-raw')`
+3. Base64 encode
+4. URL-safe: replace `+/=` with `-_`
+
+### Example
+
+```javascript
+// Compress and create paste
+const payload = {
+  p: "# My Plan\n\nThis is the plan content...",
+  a: [
+    ["C", "original text", "my comment", null]
+  ]
+};
+
+const json = JSON.stringify(payload);
+const stream = new Blob([json]).stream();
+const compressed = stream.pipeThrough(new CompressionStream('deflate-raw'));
+const buffer = await new Response(compressed).arrayBuffer();
+const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+const urlSafe = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+const response = await fetch('https://plannotator-paste.plannotator.workers.dev/api/paste', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ data: urlSafe })
+});
+
+const { id } = await response.json();
+console.log(`Short URL: https://share.plannotator.ai/${id}`);
+```
+
+```javascript
+// Retrieve and decompress paste
+const id = 'aB3xY9Kp';
+const response = await fetch(`https://plannotator-paste.plannotator.workers.dev/api/paste/${id}`);
+const { data } = await response.json();
+
+const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+const binary = atob(base64);
+const bytes = new Uint8Array(binary.length);
+for (let i = 0; i < binary.length; i++) {
+  bytes[i] = binary.charCodeAt(i);
+}
+
+const stream = new Blob([bytes]).stream();
+const decompressed = stream.pipeThrough(new DecompressionStream('deflate-raw'));
+const text = await new Response(decompressed).text();
+const payload = JSON.parse(text);
+
+console.log('Plan:', payload.p);
+console.log('Annotations:', payload.a);
+```
+
+## Error Handling
+
+All errors return JSON with an `error` field:
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| 400 | Missing or invalid "data" field | Request body missing `data` or not a string |
+| 400 | Invalid JSON body | Request body is not valid JSON |
+| 413 | Payload too large (max 512 KB compressed) | Compressed data exceeds 512 KB limit |
+| 404 | Paste not found or expired | ID doesn't exist or TTL expired |
+| 404 | Not found. Valid paths: POST /api/paste, GET /api/paste/:id | Invalid endpoint |
+| 500 | Failed to store paste | Internal storage error |
+
+## Storage Backends
+
+The paste service supports pluggable storage backends:
+
+### Filesystem (Bun)
+
+Stores data in `~/.plannotator/paste-data/` with automatic cleanup of expired files.
+
+```bash
+# Start self-hosted instance
+cd apps/paste-service
+bun run targets/bun.ts
+```
+
+### Cloudflare KV (Worker)
+
+Stores data in Cloudflare KV with automatic TTL expiration.
+
+```bash
+# Deploy to Cloudflare Workers
+cd apps/paste-service
+npx wrangler deploy
+```
+
+## Rate Limiting
+
+The hosted instance may implement rate limiting. For high-volume usage, consider self-hosting:
+
+```bash
+# Self-hosted with custom port
+PLANNOTATOR_PASTE_PORT=8080 bun run targets/bun.ts
+```
+
+Then configure Plannotator to use your instance:
+
+```bash
+export PLANNOTATOR_PASTE_URL=http://localhost:8080
+```

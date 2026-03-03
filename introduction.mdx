@@ -1,0 +1,225 @@
+---
+title: Introduction to Plannotator
+description: Interactive plan review and code annotation for AI coding agents. Approve, annotate, and collaborate on plans before execution.
+---
+
+# Welcome to Plannotator
+
+Plannotator transforms how you work with AI coding agents by providing a visual, interactive interface to review and refine plans before they execute. Mark up plans with inline annotations, track changes across versions, and share feedback with your team.
+
+<CardGroup cols={2}>
+  <Card
+    title="Visual Plan Review"
+    icon="eye"
+    href="/features#visual-plan-review"
+  >
+    Review AI-generated plans in a beautiful interface with inline annotations, deletions, replacements, and comments.
+  </Card>
+  <Card
+    title="Plan Diff & Versioning"
+    icon="code-compare"
+    href="/how-it-works#plan-versioning-system"
+  >
+    See exactly what changed between plan revisions with line-by-line diffs and automatic version history.
+  </Card>
+  <Card
+    title="Code Review"
+    icon="code-branch"
+    href="/features#code-review"
+  >
+    Review git diffs with line-level annotations before merging changes into your codebase.
+  </Card>
+  <Card
+    title="Team Collaboration"
+    icon="users"
+    href="/features#sharing--collaboration"
+  >
+    Share plans with encrypted URLs, import colleague feedback, and collaborate on AI-generated implementations.
+  </Card>
+</CardGroup>
+
+## What is Plannotator?
+
+Plannotator is an interactive plan review tool that integrates with **Claude Code**, **OpenCode**, and **Pi**. When your AI agent creates a plan, Plannotator intercepts it and opens a visual editor in your browser where you can:
+
+- **Approve** plans to let the agent proceed with implementation
+- **Annotate** specific sections with deletions, replacements, insertions, or comments
+- **Request changes** that get sent back to the agent as structured feedback
+- **Compare versions** to see how plans evolve across iterations
+- **Share plans** privately with encrypted URLs for team collaboration
+
+<Note>
+  **Zero setup required for local development.** Plannotator automatically detects your environment and configures itself for local or remote (SSH/devcontainer) sessions.
+</Note>
+
+## Quick Start
+
+Get started in under 2 minutes:
+
+<Steps>
+  <Step title="Install the CLI">
+    **macOS / Linux / WSL:**
+    ```bash
+    curl -fsSL https://plannotator.ai/install.sh | bash
+    ```
+
+    **Windows PowerShell:**
+    ```powershell
+    irm https://plannotator.ai/install.ps1 | iex
+    ```
+  </Step>
+
+  <Step title="Install the plugin for your agent">
+    **Claude Code:**
+    ```bash
+    /plugin marketplace add backnotprop/plannotator
+    /plugin install plannotator@plannotator
+    ```
+
+    **OpenCode** - Add to your `opencode.json`:
+    ```json
+    {
+      "plugin": ["@plannotator/opencode@latest"]
+    }
+    ```
+
+    **Pi:**
+    ```bash
+    pi install npm:@plannotator/pi-extension
+    ```
+  </Step>
+
+  <Step title="Start coding">
+    Ask your agent to create a plan. Plannotator will automatically open in your browser when the plan is ready for review.
+  </Step>
+</Steps>
+
+<Tip>
+  Restart your coding agent after installing the plugin to ensure it loads properly.
+</Tip>
+
+## Real-World Use Cases
+
+### Review Complex Implementations
+
+When an AI agent proposes a multi-file refactoring or new feature, review the plan in Plannotator first:
+
+- Mark sections for deletion if they're out of scope
+- Replace implementation approaches with your preferred patterns
+- Add comments to clarify requirements or constraints
+- Approve with confidence knowing exactly what will be built
+
+### Iterate on Plans Together
+
+Share plan URLs with team members to get input before execution:
+
+1. Agent generates a plan for a new API endpoint
+2. You annotate security concerns and edge cases
+3. Share the annotated plan with a colleague via encrypted URL
+4. They add comments about database schema impacts
+5. Import their feedback and send combined notes back to the agent
+6. Agent revises the plan based on team input
+
+### Track Plan Evolution
+
+Plannotator automatically saves every plan version to `~/.plannotator/history/`. When you deny a plan and the agent revises it:
+
+- Click the version diff badge to see exactly what changed
+- Toggle between rendered view (color-coded borders) and raw diff (git-style)
+- Open previous versions in VS Code to compare side-by-side
+- Browse all project plans from the history sidebar
+
+## Key Features
+
+<Info>
+  All features work seamlessly in both local and remote development environments (SSH, VS Code devcontainers, GitHub Codespaces).
+</Info>
+
+### Visual Annotation System
+
+Select text and choose from four annotation types:
+
+- **Deletion**: Remove entire sections or specific lines
+- **Replacement**: Suggest alternative implementations
+- **Insertion**: Add missing requirements or steps
+- **Comment**: Ask questions or provide context
+
+Annotations include support for:
+- Image attachments (paste screenshots directly)
+- Multi-author collaboration with identity tracking
+- Cross-element text selections (headings, code blocks, lists)
+
+### End-to-End Encrypted Sharing
+
+**Small plans** are encoded entirely in the URL hash using deflate compression - no server involved, nothing stored anywhere.
+
+**Large plans** use a short link service with AES-256-GCM encryption:
+- Plan is encrypted in your browser before upload
+- Server stores only ciphertext it cannot decrypt
+- Decryption key lives only in the URL fragment (`#key=...`)
+- Keys never sent to server
+- Auto-delete after 7 days
+
+<Warning>
+  Short links use zero-knowledge encryption similar to PrivateBin. Only users with the exact URL can decrypt plans.
+</Warning>
+
+### Integration with Notes Apps
+
+Save approved plans directly to:
+- **Obsidian** vaults with custom folder paths and filename formats
+- **Bear** notes with automatic tagging
+- **Local markdown** files with customizable directory
+
+### Code Review Mode
+
+Review git diffs before committing:
+
+```bash
+# Claude Code / OpenCode
+/plannotator-review
+```
+
+This captures uncommitted changes and opens the review UI where you can:
+- Annotate specific lines with comments or suggestions
+- Provide structured feedback to the agent
+- Compare against other branches or commits
+
+## Architecture
+
+Plannotator runs as a local web server with zero external dependencies:
+
+1. **Hook intercepts** the agent's `ExitPlanMode` action
+2. **Bun server** starts on a random port (or fixed port for remote sessions)
+3. **Browser opens** automatically with the plan loaded
+4. **User reviews** and annotates the plan
+5. **Decision returns** to the agent (approve or request changes)
+
+<Tip>
+  For remote sessions (SSH/devcontainer), set `PLANNOTATOR_REMOTE=1` to use a fixed port and skip automatic browser opening. Share links are automatically generated.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="gear" href="/how-it-works">
+    Understand the workflow, architecture, and internals
+  </Card>
+  <Card title="Features Guide" icon="star" href="/features">
+    Explore all features in detail with examples
+  </Card>
+  <Card title="Installation" icon="download" href="/installation/claude-code">
+    Detailed installation for all platforms and agents
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/advanced/configuration">
+    Environment variables, custom paths, and settings
+  </Card>
+</CardGroup>
+
+---
+
+**Open Source & Self-Hostable**
+
+Plannotator is dual-licensed under Apache 2.0 and MIT. Self-host the share portal and paste service for complete data control.
+
+[GitHub Repository](https://github.com/backnotprop/plannotator) · [Documentation](https://plannotator.ai/docs) · [Community](https://github.com/backnotprop/plannotator/discussions)

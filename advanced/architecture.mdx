@@ -1,0 +1,555 @@
+---
+title: Architecture
+description: Technical architecture and project structure of Plannotator
+---
+
+Plannotator is a monorepo containing multiple applications and shared packages that work together to provide plan review, code review, and annotation capabilities.
+
+## Project Structure
+
+```
+plannotator/
+├── apps/                        # Standalone applications
+│   ├── hook/                    # Claude Code plugin
+│   ├── opencode-plugin/         # OpenCode plugin
+│   ├── marketing/               # Website and documentation
+│   ├── paste-service/           # Short URL service
+│   └── review/                  # Development server
+├── packages/                    # Shared libraries
+│   ├── server/                  # Server implementation
+│   ├── ui/                      # React components
+│   ├── editor/                  # Plan review UI
+│   └── review-editor/           # Code review UI
+└── legacy/                      # Pre-monorepo code (reference)
+```
+
+## Plugin Architecture
+
+Plannotator provides two plugin implementations for different AI coding assistants:
+
+### Claude Code Plugin (`apps/hook/`)
+
+Uses the PermissionRequest hook system to intercept `ExitPlanMode` calls.
+
+```
+apps/hook/
+├── .claude-plugin/
+│   └── plugin.json              # Plugin manifest
+├── commands/                    # Slash commands
+│   ├── plannotator-review.md
+│   └── plannotator-annotate.md
+├── hooks/
+│   └── hooks.json               # Hook configuration
+├── server/
+│   └── index.ts                 # Entry point with subcommands
+└── dist/
+    ├── index.html               # Built plan viewer
+    └── review.html              # Built code review viewer
+```
+
+**Hook flow:**
+```
+Claude calls ExitPlanMode
+  ↓
+PermissionRequest hook fires
+  ↓
+Bun server reads plan from stdin
+  ↓
+Server starts, opens browser
+  ↓
+User reviews plan
+  ↓
+Approve/Deny decision sent to stdout
+```
+
+### OpenCode Plugin (`apps/opencode-plugin/`)
+
+Uses custom tools and event handlers.
+
+```
+apps/opencode-plugin/
+├── commands/                    # Slash commands
+│   ├── plannotator-review.md
+│   └── plannotator-annotate.md
+├── index.ts                     # Plugin entry
+├── plannotator.html             # Built plan viewer
+└── review-editor.html           # Built code review viewer
+```
+
+**Tool flow:**
+```
+Agent calls submit_plan tool
+  ↓
+Plugin intercepts tool use
+  ↓
+Server starts, opens browser
+  ↓
+User reviews plan
+  ↓
+Feedback sent to agent session
+```
+
+## Server Architecture
+
+The `packages/server/` package provides three server modes:
+
+### Plan Server (`index.ts`)
+
+Handles plan review with approval/denial flow.
+
+**Key endpoints:**
+- `GET /api/plan` - Returns plan with metadata
+- `POST /api/approve` - Approve plan
+- `POST /api/deny` - Deny with feedback
+- `GET /api/plan/version` - Fetch specific version
+- `GET /api/plan/versions` - List all versions
+- `GET /api/plan/history` - List all plans in project
+- `POST /api/plan/vscode-diff` - Open diff in VS Code
+
+**Features:**
+- Version history (packages/server/storage.ts:29)
+- Plan diffing (packages/ui/utils/planDiffEngine.ts)
+- Integration with Obsidian/Bear (packages/server/integrations.ts:18)
+- Image upload/serving (packages/server/index.ts:296)
+- Agent switching (OpenCode only)
+
+### Review Server (`review.ts`)
+
+Handles code review for git diffs.
+
+**Key endpoints:**
+- `GET /api/diff` - Returns git diff patch
+- `POST /api/feedback` - Submit review feedback
+- `GET /api/image` - Serve images
+- `POST /api/upload` - Upload images
+
+**Features:**
+- Git diff parsing
+- File tree navigation
+- Inline annotations
+- Syntax highlighting
+
+### Annotate Server (`annotate.ts`)
+
+Handles annotation of arbitrary markdown files.
+
+**Key endpoints:**
+- `GET /api/plan` - Returns markdown content with mode flag
+- `POST /api/feedback` - Submit annotations
+- `GET /api/image` - Serve images
+- `POST /api/upload` - Upload images
+
+**Features:**
+- Markdown file loading
+- Same annotation UI as plan review
+- Feedback routing to agent
+
+## UI Architecture
+
+Shared React components in `packages/ui/` power all viewer applications.
+
+### Core Components
+
+```
+packages/ui/components/
+├── Viewer.tsx                   # Main plan viewer
+├── Toolbar.tsx                  # Annotation toolbar
+├── Settings.tsx                 # Settings panel
+├── plan-diff/                   # Plan diffing UI
+│   ├── PlanDiffBadge.tsx
+│   ├── PlanDiffViewer.tsx
+│   ├── PlanCleanDiffView.tsx
+│   └── PlanRawDiffView.tsx
+└── sidebar/                     # Left sidebar
+    ├── SidebarContainer.tsx
+    ├── SidebarTabs.tsx
+    └── VersionBrowser.tsx
+```
+
+### State Management
+
+Custom hooks manage complex state:
+
+```
+packages/ui/hooks/
+├── useSharing.ts                # URL sharing + paste service
+├── usePlanDiff.ts               # Version diffing
+├── useSidebar.ts                # Sidebar state
+└── useLinkedDoc.ts              # Linked markdown docs
+```
+
+### Utilities
+
+```
+packages/ui/utils/
+├── parser.ts                    # Markdown → Block conversion
+├── sharing.ts                   # Compression/decompression
+├── storage.ts                   # Cookie persistence
+├── planSave.ts                  # Plan save settings
+├── agentSwitch.ts               # Agent switching (OpenCode)
+└── planDiffEngine.ts            # Line-level diffing
+```
+
+## Data Flow
+
+### Plan Review Flow
+
+```
+1. Agent exits plan mode
+   ↓
+2. Hook/tool intercepts
+   ↓
+3. Server saves to history
+   ~/.plannotator/history/{project}/{slug}/001.md
+   ↓
+4. Server detects previous version (if exists)
+   ↓
+5. Server starts on random/fixed port
+   ↓
+6. Browser opens plan viewer
+   ↓
+7. UI fetches plan + metadata
+   GET /api/plan
+   {
+     plan: "# My Plan...",
+     previousPlan: "# My Plan (old)...",
+     versionInfo: { version: 2, totalVersions: 2 }
+   }
+   ↓
+8. UI parses markdown → blocks
+   parser.ts:parseMarkdownToBlocks()
+   ↓
+9. User adds annotations
+   Annotation stored in React state
+   ↓
+10. User clicks Approve/Deny
+    ↓
+11. POST /api/approve or /api/deny
+    { feedback: "exported annotations" }
+    ↓
+12. Server saves decision snapshot (if enabled)
+    ~/.plannotator/plans/{slug}-approved.md
+    ↓
+13. Server resolves promise, returns to plugin
+    ↓
+14. Plugin outputs decision to stdout/agent
+```
+
+### Version History Flow
+
+```
+1. Plan arrives at server
+   ↓
+2. Generate slug from heading + date
+   storage.ts:generateSlug(plan)
+   "my-feature-2026-03-03"
+   ↓
+3. Check for existing versions
+   ~/.plannotator/history/{project}/{slug}/
+   ↓
+4. Compare with latest version
+   If identical → skip save (deduplication)
+   If different → save as next version
+   ↓
+5. Increment version number
+   001.md, 002.md, 003.md...
+   ↓
+6. Server sends previousPlan to UI
+   ↓
+7. UI computes diff automatically
+   planDiffEngine.ts:computeDiff()
+   ↓
+8. User can select any version from sidebar
+   Version Browser → fetch version → compute diff
+```
+
+### URL Sharing Flow
+
+```
+1. User clicks "Share" button
+   ↓
+2. UI compresses plan + annotations
+   sharing.ts:compressAndEncode()
+   JSON → deflate-raw → base64 → URL-safe
+   ↓
+3. If size < 2000 chars → hash URL
+   https://share.plannotator.ai/#<data>
+   ↓
+4. If size > 2000 chars → short URL
+   User confirms "Create short URL?"
+   ↓
+5. POST to paste service
+   POST /api/paste
+   { data: "compressed..." }
+   Returns: { id: "xJ9k2mP1" }
+   ↓
+6. Generate short URL
+   https://share.plannotator.ai/p/xJ9k2mP1
+   ↓
+7. Portal loads URL
+   If /p/:id → fetch from paste service
+   If /#<data> → decode from hash
+   ↓
+8. Decompress plan + annotations
+   ↓
+9. Render plan with annotations applied
+```
+
+## Storage Architecture
+
+Plannotator uses filesystem storage with a structured directory layout:
+
+```
+~/.plannotator/
+├── history/                     # Version history
+│   └── {project}/               # Project name (git repo or cwd)
+│       └── {slug}/              # Plan slug (heading + date)
+│           ├── 001.md
+│           ├── 002.md
+│           └── 003.md
+├── plans/                       # Decision snapshots (optional)
+│   ├── {slug}-approved.md
+│   ├── {slug}-denied.md
+│   └── {slug}-annotations.txt
+└── pastes/                      # Paste service data (self-hosted)
+    ├── xJ9k2mP1.json
+    └── yK8n3oQ2.json
+```
+
+**Storage functions:** packages/server/storage.ts:29
+
+## Build System
+
+Monorepo uses Bun for package management and Vite for bundling.
+
+### Build Targets
+
+```bash
+# Single-file HTML bundles (Vite + vite-plugin-singlefile)
+bun run build:hook       # apps/hook/dist/index.html
+bun run build:review     # apps/review/dist/review.html
+
+# OpenCode plugin (copies pre-built HTML)
+bun run build:opencode   # apps/opencode-plugin/
+
+# Static sites (Astro)
+bun run build:portal     # Portal viewer
+bun run build:marketing  # Marketing site
+```
+
+### Dependency Flow
+
+```
+apps/hook/server/index.ts
+  ↓ imports
+packages/server/index.ts (startPlannotatorServer)
+  ↓ imports
+packages/server/storage.ts (savePlan, saveToHistory)
+packages/server/integrations.ts (saveToObsidian)
+packages/server/remote.ts (isRemoteSession)
+
+apps/hook/dist/index.html
+  ↓ bundled from
+packages/editor/App.tsx
+  ↓ imports
+packages/ui/components/Viewer.tsx
+packages/ui/hooks/usePlanDiff.ts
+packages/ui/utils/parser.ts
+```
+
+## Paste Service Architecture
+
+Platform-agnostic core with pluggable storage backends.
+
+```
+apps/paste-service/
+├── core/
+│   ├── handler.ts               # HTTP request handler
+│   ├── storage.ts               # PasteStore interface
+│   └── cors.ts                  # CORS headers
+├── stores/
+│   ├── fs.ts                    # Filesystem backend (Bun)
+│   ├── kv.ts                    # Cloudflare KV backend
+│   └── s3.ts                    # S3-compatible backend
+└── targets/
+    ├── bun.ts                   # Bun runtime entry
+    └── cloudflare.ts            # Cloudflare Worker entry
+```
+
+**Abstraction pattern:**
+```typescript
+interface PasteStore {
+  put(id: string, data: string, ttlSeconds: number): Promise<void>;
+  get(id: string): Promise<string | null>;
+}
+```
+
+Each target wires up its storage backend:
+```typescript
+// Bun
+const store = new FsPasteStore(dataDir);
+handleRequest(request, store, cors, { maxSize, ttlSeconds });
+
+// Cloudflare
+const store = new KvPasteStore(env.PASTE_KV);
+handleRequest(request, store, cors);
+```
+
+## Integration Points
+
+### Obsidian Integration
+
+Detects vaults and saves plans as markdown notes.
+
+**Implementation:** packages/server/integrations.ts:18
+
+```typescript
+detectObsidianVaults()  // Scans ~/Library/Application Support/obsidian/
+saveToObsidian({ vaultPath, plan, tags })  // Writes .md file
+```
+
+### Bear Integration
+
+Creates Bear notes via `bear://x-callback-url/create`.
+
+**Implementation:** packages/server/integrations.ts:70
+
+```typescript
+saveToBear({ plan, tags })  // Opens bear:// URL
+```
+
+### VS Code Integration
+
+Opens diffs between plan versions.
+
+**Implementation:** packages/server/ide.ts:7
+
+```typescript
+openEditorDiff(basePath, currentPath)  // Calls `code --diff`
+```
+
+### Git Integration
+
+Detects repository info for plan context.
+
+**Implementation:** packages/server/repo.ts
+
+```typescript
+getRepoInfo()  // Returns { name, branch, remote, commit }
+```
+
+## Security Model
+
+### Image Upload Security
+
+**Validation:** packages/server/index.ts:296
+
+- File extension whitelist (png, jpg, jpeg, gif, svg, webp)
+- Stored in temp directory with random UUID names
+- Path traversal protection (resolved paths must stay within temp dir)
+
+### CORS Protection
+
+Paste service validates origins:
+
+**Implementation:** apps/paste-service/core/cors.ts:14
+
+```typescript
+// Allow localhost + configured origins
+if (isLocalhost || allowedOrigins.includes(requestOrigin)) {
+  return { "Access-Control-Allow-Origin": requestOrigin };
+}
+return {}; // No CORS headers → browser blocks
+```
+
+### Path Security
+
+All file operations validate paths:
+
+```typescript
+// Linked doc endpoint (index.ts:212)
+const normalised = resolve(resolvedPath);
+if (!normalised.startsWith(projectRoot)) {
+  return Response.json({ error: "Access denied" }, { status: 403 });
+}
+```
+
+## Extension Points
+
+Plannotator is designed for extensibility:
+
+### Add Storage Backend
+
+1. Implement `PasteStore` interface
+2. Create new file in `apps/paste-service/stores/`
+3. Wire up in target file
+
+### Add Integration
+
+1. Implement save function in `packages/server/integrations.ts`
+2. Add API endpoint in `packages/server/index.ts`
+3. Add UI in `packages/ui/components/Settings.tsx`
+
+### Add Server Mode
+
+1. Create new server file in `packages/server/`
+2. Follow pattern from `review.ts` or `annotate.ts`
+3. Add subcommand to plugin entry point
+
+## Performance Considerations
+
+### Build Optimization
+
+- Single-file HTML bundles eliminate HTTP requests
+- Vite code splitting for large dependencies
+- CSS inlined in production builds
+
+### Runtime Optimization
+
+- Random ports avoid conflicts
+- Port retry logic (5 attempts with 500ms delay)
+- Plan deduplication (skip identical versions)
+- Paste expiration sweep on startup only
+
+### Compression
+
+URL sharing uses deflate-raw compression:
+
+```typescript
+// 50 KB plan → 5 KB compressed (typical 10:1 ratio)
+compress(plan) → deflate-raw → base64 → URL-safe
+```
+
+## Testing Strategy
+
+### Plugin Testing
+
+```bash
+# Claude Code
+claud --plugin-dir ./apps/hook
+
+# OpenCode
+# Install plugin from local directory
+```
+
+### Development Servers
+
+```bash
+bun run dev:hook       # Plan viewer on http://localhost:5173
+bun run dev:review     # Review editor on http://localhost:5174
+bun run dev:portal     # Portal viewer on http://localhost:3001
+```
+
+### Paste Service Testing
+
+```bash
+bun run apps/paste-service/targets/bun.ts
+
+# Test POST
+curl -X POST http://localhost:19433/api/paste \
+  -H 'Content-Type: application/json' \
+  -d '{"data":"test"}'
+
+# Test GET
+curl http://localhost:19433/api/paste/xJ9k2mP1
+```

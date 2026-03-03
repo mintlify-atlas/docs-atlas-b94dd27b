@@ -1,0 +1,531 @@
+---
+title: Remote Environments
+description: Use Plannotator in devcontainers, SSH sessions, and remote development environments
+---
+
+Plannotator works seamlessly in remote development environments like devcontainers, SSH sessions, and cloud IDEs. Instead of opening a browser on the remote machine, Plannotator generates shareable URLs you can open locally.
+
+## Overview
+
+In remote environments, Plannotator:
+
+- Uses a **fixed port** (default: `19432`) for port forwarding
+- **Skips automatic browser opening** (no browser on remote machine)
+- **Generates share URLs** automatically and prints them to the console
+- Supports **manual server URLs** if you prefer port forwarding
+
+## Enabling Remote Mode
+
+### Automatic Detection (Legacy)
+
+Plannotator detects SSH sessions automatically via environment variables:
+
+- `SSH_TTY` - Set by SSH when connected to a pseudo-terminal
+- `SSH_CONNECTION` - Contains SSH connection details
+
+If either is set, remote mode is enabled.
+
+**Limitations:**
+
+- Only detects SSH, not devcontainers or other remote setups
+- May not detect all SSH configurations
+- No control over when remote mode is used
+
+### Explicit Remote Mode (Recommended)
+
+Set the `PLANNOTATOR_REMOTE` environment variable:
+
+```bash
+export PLANNOTATOR_REMOTE=1
+```
+
+Or:
+
+```bash
+export PLANNOTATOR_REMOTE=true
+```
+
+**Advantages:**
+
+- Works in all remote environments (SSH, devcontainers, Codespaces, etc.)
+- Explicit control (no auto-detection surprises)
+- Recommended approach for all remote setups
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/remote.ts:16`
+
+```typescript
+export function isRemoteSession(): boolean {
+  // New preferred env var
+  const remote = process.env.PLANNOTATOR_REMOTE;
+  if (remote === "1" || remote?.toLowerCase() === "true") {
+    return true;
+  }
+
+  // Legacy: SSH_TTY/SSH_CONNECTION (deprecated, silent)
+  if (process.env.SSH_TTY || process.env.SSH_CONNECTION) {
+    return true;
+  }
+
+  return false;
+}
+```
+
+### Persistent Configuration
+
+Add to your shell profile for permanent remote mode:
+
+**~/.zshrc or ~/.bashrc:**
+
+```bash
+export PLANNOTATOR_REMOTE=1
+```
+
+Reload your shell:
+
+```bash
+source ~/.zshrc  # or source ~/.bashrc
+```
+
+## Fixed Port Configuration
+
+Remote mode uses a fixed port instead of a random port.
+
+**Default port:** `19432`
+
+**Custom port:**
+
+```bash
+export PLANNOTATOR_PORT=9999
+```
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/remote.ts:34`
+
+```typescript
+export function getServerPort(): number {
+  // Explicit port from environment takes precedence
+  const envPort = process.env.PLANNOTATOR_PORT;
+  if (envPort) {
+    const parsed = parseInt(envPort, 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed < 65536) {
+      return parsed;
+    }
+  }
+
+  // Remote sessions use fixed port; local uses random (0)
+  return isRemoteSession() ? 19432 : 0;
+}
+```
+
+**Why a fixed port?**
+
+- Easier to set up port forwarding (same port every time)
+- No need to update forwarding rules for each new plan
+- Consistent URLs for bookmarking or sharing
+
+## Usage Patterns
+
+### SSH Sessions
+
+**Setup:**
+
+1. Set remote mode on the remote machine:
+   ```bash
+   export PLANNOTATOR_REMOTE=1
+   ```
+
+2. Set up SSH port forwarding (local machine):
+   ```bash
+   ssh -L 19432:localhost:19432 user@remote-host
+   ```
+
+3. Run Claude Code on the remote machine:
+   ```bash
+   claude
+   ```
+
+4. When a plan arrives, Plannotator prints:
+   ```
+   ✓ Plan review server started on port 19432
+   📋 Share URL: https://share.plannotator.ai/#eJyNVE1v2zAM...
+   ```
+
+**Two ways to review:**
+
+- **Share URL** (recommended): Open the share URL in your local browser. No port forwarding needed.
+- **Port forwarding**: Open `http://localhost:19432` in your local browser. Requires SSH port forwarding.
+
+**Port forwarding in SSH config:**
+
+Add to `~/.ssh/config`:
+
+```ssh-config
+Host myserver
+  HostName remote-host.example.com
+  User myuser
+  LocalForward 19432 localhost:19432
+```
+
+Then simply:
+
+```bash
+ssh myserver
+```
+
+Port forwarding is automatic.
+
+### Devcontainers (VS Code)
+
+**Setup:**
+
+1. Add to `.devcontainer/devcontainer.json`:
+   ```json
+   {
+     "containerEnv": {
+       "PLANNOTATOR_REMOTE": "1"
+     },
+     "forwardPorts": [19432],
+     "portsAttributes": {
+       "19432": {
+         "label": "Plannotator",
+         "onAutoForward": "silent"
+       }
+     }
+   }
+   ```
+
+2. Rebuild the container:
+   - Press `Cmd+Shift+P` → "Remote-Containers: Rebuild Container"
+
+3. Run Claude Code inside the container:
+   ```bash
+   claude
+   ```
+
+4. When a plan arrives, Plannotator prints the share URL:
+   ```
+   📋 Share URL: https://share.plannotator.ai/#eJyNVE1v2zAM...
+   ```
+
+5. Open the share URL in your local browser (VS Code handles port forwarding automatically)
+
+**Alternative: Manual port forwarding in VS Code**
+
+1. Open the Ports panel (`Cmd+Shift+P` → "Ports: Focus on Ports View")
+2. Click "Forward a Port"
+3. Enter `19432`
+4. Access at `http://localhost:19432`
+
+### GitHub Codespaces
+
+**Setup:**
+
+1. Add to `.devcontainer/devcontainer.json` (same as devcontainers above)
+
+2. Or set in Codespace settings:
+   - Open Codespace
+   - Terminal → `export PLANNOTATOR_REMOTE=1`
+   - Add to `~/.zshrc` for persistence
+
+3. Forward port 19432:
+   - Codespaces auto-forwards ports
+   - Or manually: Ports panel → Forward Port → `19432`
+
+4. Access via share URL (recommended) or forwarded port URL:
+   ```
+   https://backnotprop-plannotator-19432.preview.app.github.dev
+   ```
+
+### Gitpod
+
+**Setup:**
+
+1. Add to `.gitpod.yml`:
+   ```yaml
+   tasks:
+     - init: |
+         export PLANNOTATOR_REMOTE=1
+         echo 'export PLANNOTATOR_REMOTE=1' >> ~/.bashrc
+
+   ports:
+     - port: 19432
+       visibility: private
+       onOpen: ignore
+   ```
+
+2. Run Claude Code in the Gitpod workspace
+
+3. Access via share URL (recommended) or Gitpod's port URL:
+   ```
+   https://19432-backnotprop-plannotator-abc123.ws-us100.gitpod.io
+   ```
+
+### Cloud IDEs (Cloud9, Replit, etc.)
+
+Most cloud IDEs auto-forward ports. Follow the devcontainer pattern:
+
+1. Set `PLANNOTATOR_REMOTE=1` in your environment
+2. Note the port (`19432`) for forwarding
+3. Use the share URL or the IDE's port forwarding URL
+
+## Share URL Generation
+
+In remote mode, Plannotator automatically generates share URLs.
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/share-url.ts`
+
+```typescript
+import { generateShareUrl } from '@plannotator/ui/utils/sharing';
+
+if (isRemoteSession()) {
+  const shareUrl = await generateShareUrl(
+    plan,
+    [],  // No annotations initially
+    undefined,
+    process.env.PLANNOTATOR_SHARE_URL || 'https://share.plannotator.ai'
+  );
+  console.log(`📋 Share URL: ${shareUrl}`);
+}
+```
+
+**Benefits:**
+
+- No port forwarding required
+- Share with teammates (same URL works for everyone)
+- Works offline on local machine (once the portal page is cached)
+
+**Limitations:**
+
+- URL length limits (~2000-8000 chars depending on browser)
+- For large plans, use short URLs (paste service required)
+
+## Custom Share Portal
+
+For self-hosted share portals:
+
+```bash
+export PLANNOTATOR_SHARE_URL=https://plans.yourcompany.com
+```
+
+See [Sharing and Collaboration - Self-Hosting](/guides/sharing-and-collaboration#self-hosting-the-share-portal) for setup instructions.
+
+## Custom Paste Service
+
+For short URL support in remote environments:
+
+```bash
+export PLANNOTATOR_PASTE_URL=https://paste.yourcompany.com
+```
+
+See [Sharing and Collaboration - Self-Hosting the Paste Service](/guides/sharing-and-collaboration#self-hosting-the-paste-service) for setup instructions.
+
+## Environment Variables Summary
+
+| Variable | Description | Default |
+|----------|-------------|------|
+| `PLANNOTATOR_REMOTE` | Enable remote mode (set to `1` or `true`) | Auto-detect SSH |
+| `PLANNOTATOR_PORT` | Fixed server port | `19432` (remote), `0` (local) |
+| `PLANNOTATOR_SHARE_URL` | Base URL for share links | `https://share.plannotator.ai` |
+| `PLANNOTATOR_PASTE_URL` | Paste service URL for short URLs | `https://plannotator-paste.plannotator.workers.dev` |
+| `PLANNOTATOR_BROWSER` | Browser to open (ignored in remote mode) | System default |
+
+**Example remote configuration:**
+
+```bash
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=9999
+export PLANNOTATOR_SHARE_URL=https://plans.internal.company.com
+export PLANNOTATOR_PASTE_URL=https://paste.internal.company.com
+```
+
+## Troubleshooting
+
+### Server starts but can't connect
+
+**Symptom:** Server prints "started on port 19432" but `http://localhost:19432` doesn't load.
+
+**Causes:**
+
+- Port forwarding not set up
+- Firewall blocking the port
+- Wrong port number in forward rule
+
+**Solutions:**
+
+- Verify port forwarding: `ssh -L 19432:localhost:19432 user@host`
+- Check SSH config `LocalForward` entries
+- Test with `curl http://localhost:19432` on the local machine
+- Use the share URL instead (no port forwarding needed)
+
+### Share URL doesn't work
+
+**Symptom:** Share URL opens but shows a blank page or error.
+
+**Causes:**
+
+- Share portal down or unreachable
+- URL hash corrupted (partial copy/paste)
+- Browser URL length limit exceeded
+
+**Solutions:**
+
+- Verify the full URL was copied (including `#` fragment)
+- Try a different browser
+- Use short URL creation for large plans
+- Check that `PLANNOTATOR_SHARE_URL` is accessible from your local machine
+
+### Port already in use
+
+**Symptom:** Server fails to start with "address already in use" error.
+
+**Cause:** Another process is using port 19432.
+
+**Solutions:**
+
+- Find the process: `lsof -i :19432` (macOS/Linux) or `netstat -ano | findstr :19432` (Windows)
+- Kill the process or use a different port:
+  ```bash
+  export PLANNOTATOR_PORT=19433
+  ```
+
+### Browser opens on remote machine
+
+**Symptom:** Browser tries to open on the remote server (fails or opens on wrong display).
+
+**Cause:** Remote mode not enabled.
+
+**Solution:**
+
+```bash
+export PLANNOTATOR_REMOTE=1
+```
+
+### Share URL too long
+
+**Symptom:** Browser complains about URL length, or URL doesn't work after pasting.
+
+**Cause:** Plan is too large for hash-based sharing.
+
+**Solutions:**
+
+- Use short URL creation (requires paste service)
+- Self-host a paste service (see [Sharing and Collaboration](/guides/sharing-and-collaboration))
+- Simplify the plan or reduce annotations
+
+## Security Considerations
+
+### Port Forwarding
+
+**Risks:**
+
+- SSH port forwarding exposes the remote server to your local machine
+- Anyone on your local machine can access `localhost:19432`
+- Sensitive plans are visible to anyone with local access
+
+**Mitigations:**
+
+- Use SSH key authentication (not passwords)
+- Limit SSH access to trusted users
+- Use the share URL instead of port forwarding
+- Close SSH tunnels when not in use
+
+### Share URLs
+
+**Risks:**
+
+- Anyone with the URL can view the plan
+- URLs may be logged in proxy logs, browser history, etc.
+
+**Mitigations:**
+
+- Use self-hosted share portal for internal plans
+- Use short URLs (encrypted paste service) for sensitive plans
+- Don't share URLs in public channels (Slack, email, etc.)
+- See [Sharing and Collaboration - Security](/guides/sharing-and-collaboration#security-and-privacy)
+
+### Network Exposure
+
+**Risks:**
+
+- Fixed port (`19432`) is predictable and may be scanned
+- Devcontainers may expose ports to the network
+
+**Mitigations:**
+
+- Use firewall rules to restrict port access
+- Bind to `localhost` only (not `0.0.0.0`)
+- Use VPN for remote development
+- Disable port forwarding when not in use
+
+## Best Practices
+
+### Use Share URLs by Default
+
+**Recommended workflow:**
+
+1. Set `PLANNOTATOR_REMOTE=1` in your remote environment
+2. Run Claude Code
+3. Copy the share URL from the console
+4. Open in your local browser (no port forwarding needed)
+
+**Advantages:**
+
+- Simpler setup (no port forwarding)
+- Works from anywhere (not just your local machine)
+- Shareable with teammates
+
+**Only use port forwarding if:**
+
+- You need live updates (e.g., WebSocket support in the future)
+- The plan is too large for URL sharing
+- You prefer a local server URL
+
+### Persistent Environment Variables
+
+Add to your remote shell profile:
+
+**~/.zshrc or ~/.bashrc:**
+
+```bash
+# Plannotator remote mode
+export PLANNOTATOR_REMOTE=1
+export PLANNOTATOR_PORT=19432
+export PLANNOTATOR_SHARE_URL=https://plans.company.com
+```
+
+Reload:
+
+```bash
+source ~/.zshrc
+```
+
+Now Plannotator uses remote mode automatically in all sessions.
+
+### Consistent Port Numbers
+
+Use the same port across all remote environments:
+
+- SSH: Forward `19432` → `19432`
+- Devcontainer: Forward `19432`
+- Codespaces: Forward `19432`
+
+This way you can bookmark `http://localhost:19432` and it always works.
+
+### Self-Host for Sensitive Plans
+
+For internal or confidential plans:
+
+1. Deploy your own share portal (see [Sharing - Self-Hosting](/guides/sharing-and-collaboration#self-hosting-the-share-portal))
+2. Deploy your own paste service (see [Sharing - Paste Service](/guides/sharing-and-collaboration#self-hosting-the-paste-service))
+3. Set environment variables to use your deployments:
+   ```bash
+   export PLANNOTATOR_SHARE_URL=https://plans.internal.company.com
+   export PLANNOTATOR_PASTE_URL=https://paste.internal.company.com
+   ```
+
+Now all share URLs use your infrastructure, not the public service.
+
+## Related
+
+- [Sharing and Collaboration](/guides/sharing-and-collaboration) - Share URL details and self-hosting
+- [Integrations](/guides/integrations) - Export plans to Obsidian, Bear, etc.
+- [Installation](/installation/claude-code) - Basic Plannotator setup

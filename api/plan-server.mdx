@@ -1,0 +1,657 @@
+---
+title: Plan Server API
+description: API endpoints for the plan review server
+---
+
+The Plan Server provides endpoints for reviewing and approving/denying plans submitted by Claude Code. It handles plan retrieval, version history, annotations, integrations, and decision handling.
+
+## Server Configuration
+
+The plan server uses the following environment variables:
+
+- `PLANNOTATOR_REMOTE` - Set to `1` or `true` for remote/devcontainer mode
+- `PLANNOTATOR_PORT` - Fixed port to use (default: random locally, 19432 for remote)
+- `PLANNOTATOR_BROWSER` - Custom browser to open plans in
+- `PLANNOTATOR_SHARE_URL` - Custom base URL for share links (default: https://share.plannotator.ai)
+- `PLANNOTATOR_PASTE_URL` - Base URL of the paste service API (default: https://plannotator-paste.plannotator.workers.dev)
+
+All endpoints run on `http://localhost:{port}` where the port is either random (local) or fixed (remote mode).
+
+## Get Plan Content
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/plan
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "plan": "# Feature Implementation\n\nImplement user authentication...",
+  "origin": "claude-code",
+  "permissionMode": "ask",
+  "sharingEnabled": true,
+  "shareBaseUrl": "https://share.plannotator.ai",
+  "pasteApiUrl": "https://plannotator-paste.plannotator.workers.dev",
+  "repoInfo": {
+    "url": "https://github.com/user/repo",
+    "owner": "user",
+    "repo": "repo",
+    "branch": "main"
+  },
+  "previousPlan": "# Previous Version\n\n...",
+  "versionInfo": {
+    "version": 3,
+    "totalVersions": 5,
+    "project": "my-project"
+  }
+}
+```
+</ResponseExample>
+
+Retrieves the current plan content along with metadata.
+
+<ResponseField name="plan" type="string" required>
+  The markdown content of the plan
+</ResponseField>
+
+<ResponseField name="origin" type="string" required>
+  Origin identifier ("claude-code" or "opencode")
+</ResponseField>
+
+<ResponseField name="permissionMode" type="string">
+  Current permission mode (Claude Code only)
+</ResponseField>
+
+<ResponseField name="sharingEnabled" type="boolean">
+  Whether URL sharing is enabled
+</ResponseField>
+
+<ResponseField name="shareBaseUrl" type="string">
+  Base URL for share links
+</ResponseField>
+
+<ResponseField name="pasteApiUrl" type="string">
+  Base URL of the paste service API
+</ResponseField>
+
+<ResponseField name="repoInfo" type="object">
+  Git repository information
+  <Expandable title="properties">
+    <ResponseField name="url" type="string">Repository URL</ResponseField>
+    <ResponseField name="owner" type="string">Repository owner</ResponseField>
+    <ResponseField name="repo" type="string">Repository name</ResponseField>
+    <ResponseField name="branch" type="string">Current branch</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="previousPlan" type="string | null">
+  Previous version of the plan (if version > 1)
+</ResponseField>
+
+<ResponseField name="versionInfo" type="object">
+  Version history metadata
+  <Expandable title="properties">
+    <ResponseField name="version" type="number">Current version number</ResponseField>
+    <ResponseField name="totalVersions" type="number">Total number of versions</ResponseField>
+    <ResponseField name="project" type="string">Project name</ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Get Specific Plan Version
+
+<RequestExample>
+```bash curl
+curl "http://localhost:19432/api/plan/version?v=2"
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "plan": "# Feature Implementation (v2)\n\nImplement user authentication...",
+  "version": 2
+}
+```
+
+```json 404
+{
+  "error": "Version not found"
+}
+```
+</ResponseExample>
+
+Fetches a specific version of the current plan from history.
+
+<ParamField query="v" type="number" required>
+  Version number to retrieve (1-based)
+</ParamField>
+
+<ResponseField name="plan" type="string">
+  The markdown content of the requested version
+</ResponseField>
+
+<ResponseField name="version" type="number">
+  The version number returned
+</ResponseField>
+
+## List Plan Versions
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/plan/versions
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "project": "my-project",
+  "slug": "feature-implementation-2026-03-03",
+  "versions": [
+    {
+      "version": 1,
+      "path": "/home/user/.plannotator/history/my-project/feature-implementation-2026-03-03/001.md",
+      "timestamp": 1709481600000
+    },
+    {
+      "version": 2,
+      "path": "/home/user/.plannotator/history/my-project/feature-implementation-2026-03-03/002.md",
+      "timestamp": 1709485200000
+    }
+  ]
+}
+```
+</ResponseExample>
+
+Lists all versions of the current plan.
+
+<ResponseField name="project" type="string">
+  Project name
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  Plan slug identifier
+</ResponseField>
+
+<ResponseField name="versions" type="array">
+  Array of version metadata objects
+  <Expandable title="version object">
+    <ResponseField name="version" type="number">Version number</ResponseField>
+    <ResponseField name="path" type="string">File path to the version</ResponseField>
+    <ResponseField name="timestamp" type="number">Unix timestamp in milliseconds</ResponseField>
+  </Expandable>
+</ResponseField>
+
+## List Project Plans
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/plan/history
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "project": "my-project",
+  "plans": [
+    {
+      "slug": "feature-implementation-2026-03-03",
+      "latestVersion": 3,
+      "timestamp": 1709488800000
+    },
+    {
+      "slug": "bug-fix-auth-2026-03-02",
+      "latestVersion": 1,
+      "timestamp": 1709395200000
+    }
+  ]
+}
+```
+</ResponseExample>
+
+Lists all plans in the current project.
+
+<ResponseField name="project" type="string">
+  Project name
+</ResponseField>
+
+<ResponseField name="plans" type="array">
+  Array of plan metadata objects
+  <Expandable title="plan object">
+    <ResponseField name="slug" type="string">Plan slug identifier</ResponseField>
+    <ResponseField name="latestVersion" type="number">Latest version number</ResponseField>
+    <ResponseField name="timestamp" type="number">Unix timestamp of latest version</ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Approve Plan
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/approve \
+  -H "Content-Type: application/json" \
+  -d '{
+    "feedback": "Great plan! Just a minor suggestion on error handling.",
+    "agentSwitch": "code-expert",
+    "permissionMode": "allow",
+    "planSave": {
+      "enabled": true,
+      "customPath": "/path/to/custom/location"
+    },
+    "obsidian": {
+      "vaultPath": "/path/to/vault",
+      "plan": "# Plan content...",
+      "subfolder": "plans"
+    },
+    "bear": {
+      "plan": "# Plan content...",
+      "tags": ["plannotator", "review"]
+    }
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "ok": true,
+  "savedPath": "/home/user/.plannotator/plans/feature-implementation-2026-03-03-approved.md"
+}
+```
+</ResponseExample>
+
+Approves the plan and optionally saves it with annotations.
+
+<ParamField body="feedback" type="string">
+  Optional feedback/annotations from the user
+</ParamField>
+
+<ParamField body="agentSwitch" type="string">
+  Agent to switch to after approval (OpenCode only)
+</ParamField>
+
+<ParamField body="permissionMode" type="string">
+  Permission mode to preserve ("allow", "deny", "ask")
+</ParamField>
+
+<ParamField body="planSave" type="object">
+  Plan save settings
+  <Expandable title="properties">
+    <ParamField body="enabled" type="boolean">Whether to save the plan</ParamField>
+    <ParamField body="customPath" type="string">Custom save location</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="obsidian" type="object">
+  Obsidian integration settings
+  <Expandable title="properties">
+    <ParamField body="vaultPath" type="string" required>Path to Obsidian vault</ParamField>
+    <ParamField body="plan" type="string" required>Plan markdown content</ParamField>
+    <ParamField body="subfolder" type="string">Subfolder within vault</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="bear" type="object">
+  Bear notes integration settings
+  <Expandable title="properties">
+    <ParamField body="plan" type="string" required>Plan markdown content</ParamField>
+    <ParamField body="tags" type="array">Array of tags to apply</ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="ok" type="boolean">
+  Whether the approval was successful
+</ResponseField>
+
+<ResponseField name="savedPath" type="string">
+  File path where the plan was saved (if planSave enabled)
+</ResponseField>
+
+## Deny Plan
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/deny \
+  -H "Content-Type: application/json" \
+  -d '{
+    "feedback": "This approach won't work because of X. Please revise to address Y.",
+    "planSave": {
+      "enabled": true
+    }
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "ok": true,
+  "savedPath": "/home/user/.plannotator/plans/feature-implementation-2026-03-03-denied.md"
+}
+```
+</ResponseExample>
+
+Denies the plan with feedback for revision.
+
+<ParamField body="feedback" type="string">
+  Feedback explaining why the plan was denied
+</ParamField>
+
+<ParamField body="planSave" type="object">
+  Plan save settings
+  <Expandable title="properties">
+    <ParamField body="enabled" type="boolean">Whether to save the plan</ParamField>
+    <ParamField body="customPath" type="string">Custom save location</ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="ok" type="boolean">
+  Whether the denial was successful
+</ResponseField>
+
+<ResponseField name="savedPath" type="string">
+  File path where the plan was saved (if planSave enabled)
+</ResponseField>
+
+## Save to Notes
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/save-notes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "obsidian": {
+      "vaultPath": "/path/to/vault",
+      "plan": "# Plan content...",
+      "subfolder": "plans"
+    },
+    "bear": {
+      "plan": "# Plan content...",
+      "tags": ["plannotator", "review"]
+    }
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "ok": true,
+  "results": {
+    "obsidian": {
+      "success": true,
+      "path": "/path/to/vault/plans/feature-implementation.md"
+    },
+    "bear": {
+      "success": true
+    }
+  }
+}
+```
+</ResponseExample>
+
+Saves the plan to Obsidian and/or Bear notes (decoupled from approve/deny).
+
+<ParamField body="obsidian" type="object">
+  Obsidian integration settings
+  <Expandable title="properties">
+    <ParamField body="vaultPath" type="string" required>Path to Obsidian vault</ParamField>
+    <ParamField body="plan" type="string" required>Plan markdown content</ParamField>
+    <ParamField body="subfolder" type="string">Subfolder within vault</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="bear" type="object">
+  Bear notes integration settings
+  <Expandable title="properties">
+    <ParamField body="plan" type="string" required>Plan markdown content</ParamField>
+    <ParamField body="tags" type="array">Array of tags to apply</ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="ok" type="boolean">
+  Whether the save was successful
+</ResponseField>
+
+<ResponseField name="results" type="object">
+  Results from each integration
+  <Expandable title="properties">
+    <ResponseField name="obsidian" type="object">
+      <Expandable title="properties">
+        <ResponseField name="success" type="boolean">Whether Obsidian save succeeded</ResponseField>
+        <ResponseField name="path" type="string">Path where file was saved</ResponseField>
+        <ResponseField name="error" type="string">Error message if failed</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="bear" type="object">
+      <Expandable title="properties">
+        <ResponseField name="success" type="boolean">Whether Bear save succeeded</ResponseField>
+        <ResponseField name="error" type="string">Error message if failed</ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Get Linked Document
+
+<RequestExample>
+```bash curl
+curl "http://localhost:19432/api/doc?path=docs/architecture.md"
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "markdown": "# Architecture\n\nThis document describes...",
+  "filepath": "/home/user/project/docs/architecture.md"
+}
+```
+
+```json 404
+{
+  "error": "File not found: docs/architecture.md"
+}
+```
+
+```json 400
+{
+  "error": "Ambiguous filename 'README.md': found 3 matches",
+  "matches": [
+    "docs/README.md",
+    "src/README.md",
+    "tests/README.md"
+  ]
+}
+```
+</ResponseExample>
+
+Serves a linked markdown document from the project.
+
+<ParamField query="path" type="string" required>
+  Path to the markdown file (absolute, relative to project root, or bare filename)
+</ParamField>
+
+<ResponseField name="markdown" type="string">
+  The markdown content of the file
+</ResponseField>
+
+<ResponseField name="filepath" type="string">
+  Resolved absolute path to the file
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the file was not found or ambiguous
+</ResponseField>
+
+<ResponseField name="matches" type="array">
+  List of matching files (when filename is ambiguous)
+</ResponseField>
+
+## Serve Image
+
+<RequestExample>
+```bash curl
+curl "http://localhost:19432/api/image?path=/tmp/plannotator-uploads/image.png"
+```
+</RequestExample>
+
+<ResponseExample>
+```text 200
+[Binary image data]
+```
+</ResponseExample>
+
+Serves an image from a local path or temporary upload directory.
+
+<ParamField query="path" type="string" required>
+  Path to the image file
+</ParamField>
+
+## Upload Image
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/upload \
+  -F "file=@screenshot.png"
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "path": "/tmp/plannotator-uploads/a1b2c3d4-e5f6-7890-abcd-ef1234567890.png",
+  "originalName": "screenshot.png"
+}
+```
+</ResponseExample>
+
+Uploads an image file to a temporary directory.
+
+<ParamField body="file" type="file" required>
+  Image file to upload (multipart/form-data)
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Temporary file path where the image was saved
+</ResponseField>
+
+<ResponseField name="originalName" type="string">
+  Original filename of the uploaded image
+</ResponseField>
+
+## Detect Obsidian Vaults
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/obsidian/vaults
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "vaults": [
+    {
+      "path": "/home/user/Documents/MyVault",
+      "name": "MyVault"
+    },
+    {
+      "path": "/home/user/Obsidian/WorkVault",
+      "name": "WorkVault"
+    }
+  ]
+}
+```
+</ResponseExample>
+
+Detects available Obsidian vaults on the system.
+
+<ResponseField name="vaults" type="array">
+  Array of detected vault objects
+  <Expandable title="vault object">
+    <ResponseField name="path" type="string">Absolute path to the vault</ResponseField>
+    <ResponseField name="name" type="string">Vault name</ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Get Available Agents
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/agents
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "agents": [
+    {
+      "id": "code-expert",
+      "name": "code-expert",
+      "description": "Expert in code review and architecture"
+    },
+    {
+      "id": "documentation",
+      "name": "documentation",
+      "description": "Specialized in writing documentation"
+    }
+  ]
+}
+```
+</ResponseExample>
+
+Returns available agents for switching (OpenCode only).
+
+<ResponseField name="agents" type="array">
+  Array of agent objects
+  <Expandable title="agent object">
+    <ResponseField name="id" type="string">Agent identifier</ResponseField>
+    <ResponseField name="name" type="string">Agent name</ResponseField>
+    <ResponseField name="description" type="string">Agent description</ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Open VS Code Diff
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/plan/vscode-diff \
+  -H "Content-Type: application/json" \
+  -d '{
+    "baseVersion": 2
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "ok": true
+}
+```
+
+```json 404
+{
+  "error": "Version 2 not found"
+}
+```
+</ResponseExample>
+
+Opens a diff view in VS Code comparing the current plan with a previous version.
+
+<ParamField body="baseVersion" type="number" required>
+  Version number to compare against
+</ParamField>
+
+<ResponseField name="ok" type="boolean">
+  Whether the diff was successfully opened
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the operation failed
+</ResponseField>

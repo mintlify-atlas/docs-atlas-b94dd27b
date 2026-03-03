@@ -1,0 +1,543 @@
+---
+title: Integrations
+description: Connect Plannotator with Obsidian, Bear, VS Code, and other tools in your workflow
+---
+
+Plannotator integrates with popular note-taking apps and development tools to fit seamlessly into your existing workflow. Export plans with annotations, open diffs in your IDE, and sync with your knowledge base.
+
+## Overview
+
+Supported integrations:
+
+- **Obsidian** - Save plans to vaults with frontmatter and backlinks
+- **Bear** - Export to Bear with automatic tagging
+- **VS Code** - Open plan diffs in the editor
+- **Custom browsers** - Use your preferred browser for plan review
+
+## Obsidian Integration
+
+Export approved or annotated plans to your Obsidian vault with automatic frontmatter, tags, and backlinks.
+
+### Setup
+
+**Enable in settings:**
+
+1. Open Plannotator (reviewing a plan)
+2. Click the **Settings** icon (gear)
+3. Expand the **Obsidian** section
+4. Select your vault from the dropdown (auto-detected)
+5. Choose or create a folder (e.g., `plannotator`, `plans`, `claude`)
+6. Optionally customize the filename format
+7. Save settings
+
+**Vault detection:**
+
+Plannotator reads Obsidian's config file to find vaults:
+
+- **macOS:** `~/Library/Application Support/obsidian/obsidian.json`
+- **Linux:** `~/.config/obsidian/obsidian.json`
+- **Windows:** `%APPDATA%/obsidian/obsidian.json`
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/integrations.ts:172`
+
+```typescript
+export function detectObsidianVaults(): string[] {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  let configPath: string;
+
+  if (process.platform === "darwin") {
+    configPath = join(home, "Library/Application Support/obsidian/obsidian.json");
+  } else if (process.platform === "win32") {
+    const appData = process.env.APPDATA || join(home, "AppData/Roaming");
+    configPath = join(appData, "obsidian/obsidian.json");
+  } else {
+    configPath = join(home, ".config/obsidian/obsidian.json");
+  }
+
+  const config = JSON.parse(readFileSync(configPath, "utf-8"));
+  return Object.values(config.vaults)
+    .map(v => v.path)
+    .filter(existsSync);
+}
+```
+
+If you don't see your vault, enter the path manually:
+
+```
+/Users/you/Documents/ObsidianVault
+~/Documents/ObsidianVault  (~ is expanded to home directory)
+C:\Users\You\Documents\ObsidianVault  (Windows)
+```
+
+### Exporting Plans
+
+When you approve or deny a plan with Obsidian integration enabled:
+
+1. Plan is saved to the configured vault and folder
+2. Frontmatter is generated with tags and metadata
+3. A backlink to `[[Plannotator Plans]]` is added
+4. File is named using your custom format (or default)
+
+**Example exported note:**
+
+```markdown
+---
+created: 2026-03-03T14:30:00.000Z
+source: plannotator
+tags: [plannotator, my-project, typescript, rust]
+---
+
+[[Plannotator Plans]]
+
+# User Authentication Implementation
+
+This plan implements OAuth2 authentication...
+
+## Step 1: Install dependencies
+
+```bash
+bun add @auth/core
+```
+
+...
+```
+
+**Frontmatter fields:**
+
+- `created` - ISO timestamp when the note was exported
+- `source` - Always `"plannotator"`
+- `tags` - Automatically extracted from the plan
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/integrations.ts:82`
+
+```typescript
+export function generateFrontmatter(tags: string[]): string {
+  const now = new Date().toISOString();
+  const tagList = tags.map((t) => t.toLowerCase()).join(", ");
+  return `---
+created: ${now}
+source: plannotator
+tags: [${tagList}]
+---`;
+}
+```
+
+### Tag Extraction
+
+Tags are automatically extracted from the plan content:
+
+**Sources:**
+
+1. **Project name** - Git repo name or directory name (always included)
+2. **Plan title** - First H1 heading (up to 3 significant words)
+3. **Code languages** - Extracted from fenced code blocks (```typescript, ```rust, etc.)
+4. **"plannotator"** - Always included as a tag
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/integrations.ts:35`
+
+```typescript
+export async function extractTags(markdown: string): Promise<string[]> {
+  const tags = new Set<string>(["plannotator"]);
+
+  // Add project name tag (git repo or directory)
+  const projectName = await detectProjectName();
+  if (projectName) tags.add(projectName);
+
+  // Extract from H1 title
+  const h1Match = markdown.match(/^#\s+(?:Implementation\s+Plan:|Plan:)?\s*(.+)$/im);
+  if (h1Match) {
+    const titleWords = h1Match[1]
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !stopWords.has(word));
+    titleWords.slice(0, 3).forEach((word) => tags.add(word));
+  }
+
+  // Extract code fence languages
+  const langMatches = markdown.matchAll(/```(\w+)/g);
+  for (const [, lang] of langMatches) {
+    if (!commonMarkupLangs.has(lang.toLowerCase())) {
+      tags.add(lang.toLowerCase());
+    }
+  }
+
+  return Array.from(tags).slice(0, 7);
+}
+```
+
+**Example:**
+
+Plan in `~/code/my-app` with heading "User Authentication Implementation" and code blocks for `typescript` and `sql`:
+
+```yaml
+tags: [plannotator, my-app, user, authentication, implementation, typescript, sql]
+```
+
+### Filename Formats
+
+Customize how plan files are named using variable substitution.
+
+**Default format:**
+
+```
+{title} - {Mon} {D}, {YYYY} {h}-{mm}{ampm}
+```
+
+**Example output:**
+
+```
+User Authentication - Mar 3, 2026 2-30pm.md
+```
+
+**Available variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{title}` | Plan title from H1 heading | `User Authentication` |
+| `{YYYY}` | 4-digit year | `2026` |
+| `{MM}` | 2-digit month | `03` |
+| `{DD}` | 2-digit day | `03` |
+| `{Mon}` | Abbreviated month name | `Mar` |
+| `{D}` | Day without leading zero | `3` |
+| `{HH}` | 2-digit hour, 24h | `14` |
+| `{h}` | Hour without leading zero, 12h | `2` |
+| `{hh}` | 2-digit hour, 12h | `02` |
+| `{mm}` | 2-digit minutes | `30` |
+| `{ss}` | 2-digit seconds | `45` |
+| `{ampm}` | Lowercase am/pm | `pm` |
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/integrations.ts:131`
+
+```typescript
+export function generateFilename(markdown: string, format?: string): string {
+  const title = extractTitle(markdown);
+  const now = new Date();
+
+  const vars: Record<string, string> = {
+    title,
+    YYYY: String(now.getFullYear()),
+    MM: String(now.getMonth() + 1).padStart(2, '0'),
+    DD: String(now.getDate()).padStart(2, '0'),
+    Mon: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.getMonth()],
+    D: String(now.getDate()),
+    HH: String(now.getHours()).padStart(2, '0'),
+    h: String(now.getHours() % 12 || 12),
+    hh: String(now.getHours() % 12 || 12).padStart(2, '0'),
+    mm: String(now.getMinutes()).padStart(2, '0'),
+    ss: String(now.getSeconds()).padStart(2, '0'),
+    ampm: now.getHours() >= 12 ? 'pm' : 'am',
+  };
+
+  const template = format?.trim() || DEFAULT_FILENAME_FORMAT;
+  return template.replace(/\{(\w+)\}/g, (match, key) => vars[key] ?? match);
+}
+```
+
+**Custom format examples:**
+
+```
+{YYYY}-{MM}-{DD} - {title}
+→ 2026-03-03 - User Authentication.md
+
+{title}
+→ User Authentication.md
+
+[{YYYY}-{MM}-{DD} {HH}-{mm}] {title}
+→ [2026-03-03 14-30] User Authentication.md
+```
+
+### Backlinks
+
+Exported notes include a backlink to `[[Plannotator Plans]]`:
+
+```markdown
+[[Plannotator Plans]]
+
+# User Authentication Implementation
+...
+```
+
+Create a "Plannotator Plans" note in your vault to serve as an index:
+
+```markdown
+# Plannotator Plans
+
+All plans exported from Plannotator appear here.
+
+## Recent Plans
+
+```dataview
+LIST
+FROM #plannotator
+SORT created DESC
+LIMIT 10
+```
+```
+
+This creates a searchable index of all exported plans.
+
+### Troubleshooting
+
+**Vault not detected:**
+
+- Verify Obsidian is installed and you've opened at least one vault
+- Check the config file exists at the platform-specific path
+- Enter the vault path manually in settings
+
+**Export fails with permission error:**
+
+- Ensure the vault directory is writable
+- Check that the target folder exists (create it in Obsidian first)
+
+**Tags missing or incorrect:**
+
+- Verify the plan has a clear H1 heading
+- Check that code blocks use language tags (```typescript, not just ```)
+- Use `detectProjectName()` output to confirm project tag
+
+## Bear Integration
+
+Export plans to Bear (macOS only) with automatic tagging.
+
+### Setup
+
+**Enable in settings:**
+
+1. Open Plannotator settings
+2. Enable **Save to Bear**
+3. Save settings
+
+**Requirements:**
+
+- macOS (Bear is macOS/iOS only)
+- Bear app installed
+- No additional configuration needed
+
+### Exporting Plans
+
+When you approve or deny a plan with Bear integration enabled:
+
+1. Title is extracted from the first H1 heading
+2. Tags are extracted (same logic as Obsidian)
+3. Bear is opened via URL scheme with the plan content and tags
+4. Note is created in Bear (without opening the editor)
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/integrations.ts:270`
+
+```typescript
+export async function saveToBear(config: BearConfig): Promise<IntegrationResult> {
+  const { plan } = config;
+  const title = extractTitle(plan);
+  const tags = await extractTags(plan);
+  const hashtags = tags.map(t => `#${t}`).join(' ');
+  const content = `${plan}\n\n${hashtags}`;
+
+  const url = `bear://x-callback-url/create?title=${encodeURIComponent(title)}&text=${encodeURIComponent(content)}&open_note=no`;
+  await $`open ${url}`.quiet();
+
+  return { success: true };
+}
+```
+
+**Example Bear note:**
+
+```markdown
+# User Authentication Implementation
+
+This plan implements OAuth2 authentication...
+
+#plannotator #my-project #user #authentication #typescript
+```
+
+### Bear URL Scheme
+
+Plannotator uses Bear's `x-callback-url` API:
+
+```
+bear://x-callback-url/create?title=...&text=...&open_note=no
+```
+
+**Parameters:**
+
+- `title` - Note title (from plan H1 heading)
+- `text` - Note content (plan markdown + hashtags)
+- `open_note=no` - Create note without opening the editor
+
+See [Bear's URL Scheme documentation](https://bear.app/faq/X-callback-url%20Scheme%20documentation/) for details.
+
+### Troubleshooting
+
+**Bear doesn't open:**
+
+- Verify Bear is installed
+- Check that macOS allows URL scheme handling
+- Try opening `bear://` manually to test
+
+**Tags not appearing:**
+
+- Tags must be at the end of the note (Plannotator appends them)
+- Verify tags are formatted as `#tag` (not `tag`)
+
+## VS Code Integration
+
+Open plan diffs side-by-side in VS Code for detailed comparison.
+
+### Setup
+
+**Requirements:**
+
+- VS Code installed with `code` command in PATH
+- No additional configuration needed
+
+**Install `code` command:**
+
+If `code` is not available:
+
+1. Open VS Code
+2. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
+3. Type "Shell Command: Install 'code' command in PATH"
+4. Restart your terminal
+
+### Opening Diffs
+
+From the plan diff view:
+
+1. Click **Open in VS Code** in the diff toolbar
+2. Select a base version (or use the current diff base)
+3. VS Code opens with split diff view:
+   - Left: Base version
+   - Right: Current version
+4. Use VS Code's diff navigation (F7/Shift+F7)
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/ide.ts`
+
+```typescript
+export async function openEditorDiff(
+  baseContent: string,
+  currentContent: string,
+  baseName: string = 'Base',
+  currentName: string = 'Current'
+): Promise<void> {
+  const tmpDir = await fs.mkdtemp('/tmp/plannotator-diff-');
+  const baseFile = join(tmpDir, `${baseName}.md`);
+  const currentFile = join(tmpDir, `${currentName}.md`);
+
+  await Bun.write(baseFile, baseContent);
+  await Bun.write(currentFile, currentContent);
+
+  await $`code --diff ${baseFile} ${currentFile}`.quiet();
+}
+```
+
+**Temporary files:**
+
+Diff files are created in `/tmp/plannotator-diff-*/` and cleaned up on reboot.
+
+### Troubleshooting
+
+**`code` command not found:**
+
+- Install the `code` command (see Setup above)
+- Or set `EDITOR` environment variable: `export EDITOR="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"`
+
+**VS Code opens but doesn't show diff:**
+
+- Check that both files were created in `/tmp/plannotator-diff-*/`
+- Try opening the files manually: `code --diff /tmp/plannotator-diff-abc/Base.md /tmp/plannotator-diff-abc/Current.md`
+
+## Custom Browser
+
+Use your preferred browser for plan review instead of the system default.
+
+### Setup
+
+**Set environment variable:**
+
+```bash
+export PLANNOTATOR_BROWSER="/Applications/Firefox.app"
+```
+
+Or add to your shell profile (`~/.zshrc`, `~/.bashrc`):
+
+```bash
+echo 'export PLANNOTATOR_BROWSER="/Applications/Firefox.app"' >> ~/.zshrc
+```
+
+**macOS:**
+
+Use app name or full path:
+
+```bash
+export PLANNOTATOR_BROWSER="Firefox"
+export PLANNOTATOR_BROWSER="/Applications/Firefox.app"
+export PLANNOTATOR_BROWSER="Google Chrome"
+```
+
+**Linux/Windows:**
+
+Use executable path:
+
+```bash
+export PLANNOTATOR_BROWSER="/usr/bin/firefox"
+export PLANNOTATOR_BROWSER="C:\Program Files\Mozilla Firefox\firefox.exe"
+```
+
+**Code reference:** `/home/daytona/workspace/source/packages/server/browser.ts`
+
+```typescript
+export async function openBrowser(url: string): Promise<void> {
+  const customBrowser = process.env.PLANNOTATOR_BROWSER;
+
+  if (customBrowser) {
+    if (process.platform === "darwin") {
+      await $`open -a ${customBrowser} ${url}`.quiet();
+    } else if (process.platform === "win32") {
+      await $`start ${customBrowser} ${url}`.quiet();
+    } else {
+      await $`${customBrowser} ${url}`.quiet();
+    }
+  } else {
+    // Use system default
+    if (process.platform === "darwin") {
+      await $`open ${url}`.quiet();
+    } else if (process.platform === "win32") {
+      await $`start ${url}`.quiet();
+    } else {
+      await $`xdg-open ${url}`.quiet();
+    }
+  }
+}
+```
+
+### Troubleshooting
+
+**Browser doesn't open:**
+
+- Verify the browser path is correct
+- Test manually: `open -a Firefox https://example.com` (macOS)
+- Check permissions (executable bit set on Linux)
+
+**Wrong browser opens:**
+
+- Verify `PLANNOTATOR_BROWSER` is set: `echo $PLANNOTATOR_BROWSER`
+- Check for typos in app name or path
+- Restart your terminal to pick up env var changes
+
+## Future Integrations
+
+Planned integrations:
+
+- **Notion** - Export to Notion pages with databases
+- **Linear** - Create issues from plan annotations
+- **Slack** - Share plan summaries in channels
+- **Jira** - Generate tickets from plan steps
+
+Request integrations at [github.com/backnotprop/plannotator/issues](https://github.com/backnotprop/plannotator/issues).
+
+## Related
+
+- [Plan Versioning](/guides/plan-versioning) - Export specific plan versions
+- [Sharing and Collaboration](/guides/sharing-and-collaboration) - Share plans via URL
+- [Remote Environments](/guides/remote-environments) - Using Plannotator in remote setups

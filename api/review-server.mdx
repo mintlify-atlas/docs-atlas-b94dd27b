@@ -1,0 +1,373 @@
+---
+title: Review Server API
+description: API endpoints for the code review server
+---
+
+The Review Server provides endpoints for reviewing git diffs with annotations and feedback. It supports switching between different diff types (uncommitted, staged, branch, etc.) and integrates with OpenCode for agent switching.
+
+## Server Configuration
+
+The review server uses the following environment variables:
+
+- `PLANNOTATOR_REMOTE` - Set to `1` or `true` for remote/devcontainer mode
+- `PLANNOTATOR_PORT` - Fixed port to use (default: random locally, 19432 for remote)
+
+All endpoints run on `http://localhost:{port}` where the port is either random (local) or fixed (remote mode).
+
+## Get Diff Content
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/diff
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "rawPatch": "diff --git a/src/index.ts b/src/index.ts\nindex 1234567..abcdefg 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,4 @@\n+import { config } from './config';\n import { app } from './app';\n...",
+  "gitRef": "Uncommitted changes",
+  "origin": "opencode",
+  "diffType": "uncommitted",
+  "gitContext": {
+    "currentBranch": "feature-auth",
+    "defaultBranch": "main",
+    "availableDiffs": [
+      {
+        "type": "uncommitted",
+        "label": "Uncommitted changes",
+        "available": true
+      },
+      {
+        "type": "staged",
+        "label": "Staged changes",
+        "available": true
+      },
+      {
+        "type": "branch",
+        "label": "Branch diff (main...feature-auth)",
+        "available": true
+      }
+    ]
+  },
+  "sharingEnabled": true,
+  "shareBaseUrl": "https://share.plannotator.ai",
+  "repoInfo": {
+    "url": "https://github.com/user/repo",
+    "owner": "user",
+    "repo": "repo",
+    "branch": "feature-auth"
+  }
+}
+```
+
+```json 200 (with error)
+{
+  "rawPatch": "",
+  "gitRef": "Uncommitted changes",
+  "origin": "opencode",
+  "diffType": "uncommitted",
+  "error": "No changes to show"
+}
+```
+</ResponseExample>
+
+Retrieves the current git diff content and metadata.
+
+<ResponseField name="rawPatch" type="string" required>
+  The raw git diff patch string
+</ResponseField>
+
+<ResponseField name="gitRef" type="string" required>
+  Git reference used for the diff (e.g., "HEAD", "main..HEAD", "--staged")
+</ResponseField>
+
+<ResponseField name="origin" type="string">
+  Origin identifier ("claude-code" or "opencode")
+</ResponseField>
+
+<ResponseField name="diffType" type="string">
+  Current diff type being displayed ("uncommitted", "staged", "branch", "commit", "all")
+</ResponseField>
+
+<ResponseField name="gitContext" type="object">
+  Git context with branch info and available diff options
+  <Expandable title="properties">
+    <ResponseField name="currentBranch" type="string">Current git branch</ResponseField>
+    <ResponseField name="defaultBranch" type="string">Default branch (main/master)</ResponseField>
+    <ResponseField name="availableDiffs" type="array">
+      <Expandable title="diff option">
+        <ResponseField name="type" type="string">Diff type identifier</ResponseField>
+        <ResponseField name="label" type="string">Human-readable label</ResponseField>
+        <ResponseField name="available" type="boolean">Whether this diff type has changes</ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="sharingEnabled" type="boolean">
+  Whether URL sharing is enabled
+</ResponseField>
+
+<ResponseField name="shareBaseUrl" type="string">
+  Base URL for share links
+</ResponseField>
+
+<ResponseField name="repoInfo" type="object">
+  Git repository information
+  <Expandable title="properties">
+    <ResponseField name="url" type="string">Repository URL</ResponseField>
+    <ResponseField name="owner" type="string">Repository owner</ResponseField>
+    <ResponseField name="repo" type="string">Repository name</ResponseField>
+    <ResponseField name="branch" type="string">Current branch</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if git diff failed
+</ResponseField>
+
+## Switch Diff Type
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/diff/switch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "diffType": "staged"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "rawPatch": "diff --git a/src/auth.ts b/src/auth.ts\nindex 1234567..abcdefg 100644\n--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1,5 +1,10 @@\n+export async function authenticate(user: string, pass: string) {\n+  // Implementation\n+}\n...",
+  "gitRef": "Staged changes",
+  "diffType": "staged"
+}
+```
+
+```json 200 (with error)
+{
+  "rawPatch": "",
+  "gitRef": "Staged changes",
+  "diffType": "staged",
+  "error": "No staged changes to show"
+}
+```
+
+```json 400
+{
+  "error": "Missing diffType"
+}
+```
+</ResponseExample>
+
+Switches to a different diff type and returns the updated diff.
+
+<ParamField body="diffType" type="string" required>
+  The diff type to switch to. Valid values:
+  - `uncommitted` - Unstaged changes
+  - `staged` - Staged changes
+  - `branch` - Changes between default branch and current branch
+  - `commit` - Last commit
+  - `all` - All changes (staged + unstaged)
+</ParamField>
+
+<ResponseField name="rawPatch" type="string">
+  The raw git diff patch string for the new diff type
+</ResponseField>
+
+<ResponseField name="gitRef" type="string">
+  Git reference for the new diff
+</ResponseField>
+
+<ResponseField name="diffType" type="string">
+  The diff type that was switched to
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the new diff has no changes or failed
+</ResponseField>
+
+## Submit Review Feedback
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "feedback": "Great changes! Just a few suggestions:\n\n1. Add error handling in authenticate()\n2. Consider adding unit tests",
+    "annotations": [
+      {
+        "id": "ann-1",
+        "type": "COMMENT",
+        "filePath": "src/auth.ts",
+        "lineNumber": 15,
+        "text": "Add null check here",
+        "originalText": "const user = await findUser(username);"
+      }
+    ],
+    "agentSwitch": "code-expert"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "ok": true
+}
+```
+
+```json 500
+{
+  "error": "Failed to process feedback"
+}
+```
+</ResponseExample>
+
+Submits review feedback with optional annotations.
+
+<ParamField body="feedback" type="string" required>
+  Review feedback text to send to the agent
+</ParamField>
+
+<ParamField body="annotations" type="array">
+  Array of annotation objects from the review UI
+  <Expandable title="annotation object">
+    <ParamField body="id" type="string">Unique annotation ID</ParamField>
+    <ParamField body="type" type="string">Annotation type (COMMENT, DELETION, REPLACEMENT, etc.)</ParamField>
+    <ParamField body="filePath" type="string">File path being annotated</ParamField>
+    <ParamField body="lineNumber" type="number">Line number in the file</ParamField>
+    <ParamField body="text" type="string">Annotation text/comment</ParamField>
+    <ParamField body="originalText" type="string">Original code text</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="agentSwitch" type="string">
+  Agent to switch to after review (OpenCode only)
+</ParamField>
+
+<ResponseField name="ok" type="boolean">
+  Whether the feedback was successfully received
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the operation failed
+</ResponseField>
+
+## Serve Image
+
+<RequestExample>
+```bash curl
+curl "http://localhost:19432/api/image?path=/tmp/plannotator-uploads/mockup.png"
+```
+</RequestExample>
+
+<ResponseExample>
+```text 200
+[Binary image data]
+```
+
+```text 404
+File not found
+```
+</ResponseExample>
+
+Serves an image from a local path or temporary upload directory.
+
+<ParamField query="path" type="string" required>
+  Path to the image file
+</ParamField>
+
+## Upload Image
+
+<RequestExample>
+```bash curl
+curl -X POST http://localhost:19432/api/upload \
+  -F "file=@design-mockup.png"
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "path": "/tmp/plannotator-uploads/b2c3d4e5-f6a7-8901-bcde-f12345678901.png",
+  "originalName": "design-mockup.png"
+}
+```
+
+```json 400
+{
+  "error": "No file provided"
+}
+```
+</ResponseExample>
+
+Uploads an image file to a temporary directory for use in annotations.
+
+<ParamField body="file" type="file" required>
+  Image file to upload (multipart/form-data)
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Temporary file path where the image was saved
+</ResponseField>
+
+<ResponseField name="originalName" type="string">
+  Original filename of the uploaded image
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if upload failed
+</ResponseField>
+
+## Get Available Agents
+
+<RequestExample>
+```bash curl
+curl http://localhost:19432/api/agents
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200
+{
+  "agents": [
+    {
+      "id": "code-expert",
+      "name": "code-expert",
+      "description": "Expert in code review and architecture"
+    },
+    {
+      "id": "testing",
+      "name": "testing",
+      "description": "Specialized in testing strategies"
+    }
+  ]
+}
+```
+
+```json 200 (Claude Code)
+{
+  "agents": []
+}
+```
+</ResponseExample>
+
+Returns available agents for switching after review (OpenCode only).
+
+<ResponseField name="agents" type="array">
+  Array of agent objects (empty for Claude Code)
+  <Expandable title="agent object">
+    <ResponseField name="id" type="string">Agent identifier</ResponseField>
+    <ResponseField name="name" type="string">Agent name</ResponseField>
+    <ResponseField name="description" type="string">Agent description</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if fetching agents failed
+</ResponseField>

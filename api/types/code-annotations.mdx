@@ -1,0 +1,278 @@
+---
+title: 'Code Annotation Types'
+description: 'CodeAnnotation and CodeAnnotationType for code review'
+---
+
+## Overview
+
+Code annotations are used in the code review feature to provide feedback on git diffs. Unlike plan annotations which mark up prose documents, code annotations are line-based and can include suggested code changes.
+
+## CodeAnnotationType
+
+Defines the type of code review feedback.
+
+```typescript
+type CodeAnnotationType = 'comment' | 'suggestion' | 'concern';
+```
+
+### Values
+
+<ParamField path="comment" type="string">
+  General comment or note on the code without implying changes. Used for questions, explanations, or neutral observations.
+</ParamField>
+
+<ParamField path="suggestion" type="string">
+  Suggested improvement with optional replacement code. Can include `suggestedCode` field showing the proposed changes.
+</ParamField>
+
+<ParamField path="concern" type="string">
+  Flag a potential issue or problem that needs addressing. More serious than a comment but may not include a specific fix.
+</ParamField>
+
+## CodeAnnotation
+
+Represents a single annotation on a code diff.
+
+```typescript
+interface CodeAnnotation {
+  id: string;
+  type: CodeAnnotationType;
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  side: 'old' | 'new';
+  text?: string;
+  suggestedCode?: string;
+  originalCode?: string;
+  createdAt: number;
+  author?: string;
+}
+```
+
+### Fields
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the annotation. Generated using `generateId()` utility.
+</ResponseField>
+
+<ResponseField name="type" type="CodeAnnotationType" required>
+  The type of code review feedback: `comment`, `suggestion`, or `concern`.
+</ResponseField>
+
+<ResponseField name="filePath" type="string" required>
+  Path to the file being annotated, relative to the repository root (e.g., `"src/components/Button.tsx"`).
+</ResponseField>
+
+<ResponseField name="lineStart" type="number" required>
+  Starting line number of the annotation range (1-based).
+</ResponseField>
+
+<ResponseField name="lineEnd" type="number" required>
+  Ending line number of the annotation range (1-based, inclusive). For single-line annotations, this equals `lineStart`.
+</ResponseField>
+
+<ResponseField name="side" type="'old' | 'new'" required>
+  Which side of the diff the annotation applies to:
+  
+  - `old` - Left side (deletions, original code)
+  - `new` - Right side (additions, modified code)
+  
+  Maps to `deletions` | `additions` in the `@pierre/diffs` library.
+</ResponseField>
+
+<ResponseField name="text" type="string">
+  The annotation comment text. Used for all types but especially important for `comment` and `concern` types.
+</ResponseField>
+
+<ResponseField name="suggestedCode" type="string">
+  Proposed replacement code for `suggestion` type annotations. Shown as a diff against `originalCode`.
+</ResponseField>
+
+<ResponseField name="originalCode" type="string">
+  The original selected code lines. Used with `suggestedCode` to show before/after diff for suggestions.
+</ResponseField>
+
+<ResponseField name="createdAt" type="number" required>
+  Unix timestamp (milliseconds) when the annotation was created.
+</ResponseField>
+
+<ResponseField name="author" type="string">
+  Identity of the reviewer who created the annotation. Used to distinguish feedback from multiple reviewers.
+</ResponseField>
+
+## Related Types
+
+### DiffAnnotationMetadata
+
+Metadata format used for integration with the `@pierre/diffs` library.
+
+```typescript
+interface DiffAnnotationMetadata {
+  annotationId: string;
+  type: CodeAnnotationType;
+  text?: string;
+  suggestedCode?: string;
+  originalCode?: string;
+  author?: string;
+}
+```
+
+### SelectedLineRange
+
+Represents a user's line selection in the diff viewer before creating an annotation.
+
+```typescript
+interface SelectedLineRange {
+  start: number;
+  end: number;
+  side: 'deletions' | 'additions';
+  endSide?: 'deletions' | 'additions';
+}
+```
+
+## Usage Examples
+
+### Creating a Comment Annotation
+
+```typescript
+import { CodeAnnotation, CodeAnnotationType } from '@plannotator/ui/types';
+
+const comment: CodeAnnotation = {
+  id: generateId(),
+  type: 'comment',
+  filePath: 'src/utils/validator.ts',
+  lineStart: 42,
+  lineEnd: 42,
+  side: 'new',
+  text: 'Should we add null checking here?',
+  createdAt: Date.now(),
+  author: 'alice@example.com',
+};
+```
+
+### Creating a Suggestion with Code
+
+```typescript
+const suggestion: CodeAnnotation = {
+  id: generateId(),
+  type: 'suggestion',
+  filePath: 'src/components/LoginForm.tsx',
+  lineStart: 15,
+  lineEnd: 18,
+  side: 'new',
+  text: 'Use async/await instead of .then() for better readability',
+  originalCode: `fetch('/api/login')
+  .then(res => res.json())
+  .then(data => setUser(data))
+  .catch(err => console.error(err));`,
+  suggestedCode: `try {
+  const res = await fetch('/api/login');
+  const data = await res.json();
+  setUser(data);
+} catch (err) {
+  console.error(err);
+}`,
+  createdAt: Date.now(),
+  author: 'bob@example.com',
+};
+```
+
+### Creating a Concern Annotation
+
+```typescript
+const concern: CodeAnnotation = {
+  id: generateId(),
+  type: 'concern',
+  filePath: 'src/api/database.ts',
+  lineStart: 89,
+  lineEnd: 95,
+  side: 'new',
+  text: 'This query is vulnerable to SQL injection. Use parameterized queries instead.',
+  originalCode: `const query = \`SELECT * FROM users WHERE id = \${userId}\`;\ndb.execute(query);`,
+  createdAt: Date.now(),
+  author: 'security-team@example.com',
+};
+```
+
+### Adding Annotation from User Selection
+
+```typescript
+const handleAddAnnotation = (
+  type: CodeAnnotationType,
+  text?: string,
+  suggestedCode?: string,
+  originalCode?: string
+) => {
+  if (!pendingSelection || !files[activeFileIndex]) return;
+
+  // Normalize line range (in case user selected bottom-to-top)
+  const lineStart = Math.min(pendingSelection.start, pendingSelection.end);
+  const lineEnd = Math.max(pendingSelection.start, pendingSelection.end);
+
+  const newAnnotation: CodeAnnotation = {
+    id: generateId(),
+    type,
+    filePath: files[activeFileIndex].path,
+    lineStart,
+    lineEnd,
+    side: pendingSelection.side === 'additions' ? 'new' : 'old',
+    text,
+    suggestedCode,
+    originalCode,
+    createdAt: Date.now(),
+    author: identity,
+  };
+
+  setAnnotations(prev => [...prev, newAnnotation]);
+  setPendingSelection(null);
+};
+```
+
+### Filtering Annotations by Type
+
+```typescript
+function getCriticalFeedback(annotations: CodeAnnotation[]): CodeAnnotation[] {
+  return annotations.filter(ann => ann.type === 'concern');
+}
+
+function getSuggestions(annotations: CodeAnnotation[]): CodeAnnotation[] {
+  return annotations.filter(ann => 
+    ann.type === 'suggestion' && ann.suggestedCode !== undefined
+  );
+}
+
+function getFileAnnotations(
+  annotations: CodeAnnotation[],
+  filePath: string
+): CodeAnnotation[] {
+  return annotations.filter(ann => ann.filePath === filePath);
+}
+```
+
+### Converting to DiffAnnotationMetadata
+
+```typescript
+function toDiffMetadata(annotation: CodeAnnotation): DiffAnnotationMetadata {
+  return {
+    annotationId: annotation.id,
+    type: annotation.type,
+    text: annotation.text,
+    suggestedCode: annotation.suggestedCode,
+    originalCode: annotation.originalCode,
+    author: annotation.author,
+  };
+}
+```
+
+## Implementation Notes
+
+- Line numbers are 1-based to match standard editor conventions
+- The `side` field uses `'old' | 'new'` while selections use `'deletions' | 'additions'` - conversion is needed
+- Multi-line annotations are supported: select from `lineStart` to `lineEnd` (inclusive)
+- The `originalCode` field preserves context even if the diff changes
+- Suggestions without `suggestedCode` are effectively concerns with improvement hints
+
+## Related Types
+
+- [Annotation](/api/types/annotations) - Annotations for plan/document review
+- [Review Server API](/api/server/review) - Server endpoints for code review
