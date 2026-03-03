@@ -1,0 +1,101 @@
+{
+  "projectType": "saas",
+  "projectName": "Plannotator",
+  "projectDescription": "Interactive plan review and annotation tool for AI coding agents like Claude Code, OpenCode, and Pi.",
+  "theme": "maple",
+  "primaryColor": "#6366F1",
+  "lightColor": "#818CF8",
+  "darkColor": "#4F46E5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["introduction", "how-it-works", "features"]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/claude-code",
+              "installation/opencode",
+              "installation/pi"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/plan-review",
+              "features/plan-diff",
+              "features/code-review",
+              "features/markdown-annotation"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/annotation-types",
+              "guides/sharing-and-collaboration",
+              "guides/plan-versioning",
+              "guides/integrations",
+              "guides/remote-environments"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/configuration",
+              "advanced/self-hosting",
+              "advanced/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Server APIs",
+            "pages": [
+              "api/plan-server",
+              "api/review-server",
+              "api/annotate-server",
+              "api/paste-service"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "api/types/annotations",
+              "api/types/blocks",
+              "api/types/code-annotations"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Visual plan review with inline annotations",
+    "Automatic plan diff tracking",
+    "Code review for git diffs",
+    "Markdown file annotation",
+    "End-to-end encrypted sharing",
+    "Plan version history",
+    "Integration with Obsidian and Bear",
+    "Multi-agent support (Claude Code, OpenCode, Pi)"
+  ],
+  "publicApiSurface": [
+    "submit_plan tool",
+    "/plannotator-review command",
+    "/plannotator-annotate command",
+    "/api/plan endpoints",
+    "/api/review endpoints",
+    "/api/annotate endpoints",
+    "/api/paste endpoints",
+    "PermissionRequest hook",
+    "Annotation types (DELETION, INSERTION, REPLACEMENT, COMMENT, GLOBAL_COMMENT)",
+    "Server configuration via environment variables"
+  ]
+}
